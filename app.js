@@ -37,6 +37,7 @@
   const DOTS_ICON  = '<svg viewBox="0 0 24 24" width="16" height="16"><circle cx="5" cy="12" r="1.8" fill="currentColor"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><circle cx="19" cy="12" r="1.8" fill="currentColor"/></svg>';
   const CHECKLIST_ICON = '<svg viewBox="0 0 24 24" width="14" height="14"><rect x="3" y="3" width="18" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 12l3 3 5-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   const X_ICON = '<svg viewBox="0 0 24 24" width="14" height="14"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+  const GRIP_ICON = '<svg viewBox="0 0 24 24" width="14" height="14"><circle cx="9" cy="6" r="1.6" fill="currentColor"/><circle cx="15" cy="6" r="1.6" fill="currentColor"/><circle cx="9" cy="12" r="1.6" fill="currentColor"/><circle cx="15" cy="12" r="1.6" fill="currentColor"/><circle cx="9" cy="18" r="1.6" fill="currentColor"/><circle cx="15" cy="18" r="1.6" fill="currentColor"/></svg>';
   const PREFS_KEY = 'taskBoard.prefs';
   const NO_PROJECT = { id: null, name: 'No project', color: '#9aadbd' };
 
@@ -50,7 +51,8 @@
   let editingTaskId = null;
   let editingProjectId = null;
   let draft = null;          // task being edited in the drawer
-  let addingSubFor = null;   // task id whose table row shows an "add subtask" input with no subtasks yet
+  let addingSubFor = null;
+  let rowDrag = null;        // in-progress table drag (see "Table row reordering")   // task id whose table row shows an "add subtask" input with no subtasks yet
   let prefs = loadPrefs();   // { view, mode, collapsed: {}, subsCollapsed: {} }
 
   function loadPrefs() {
@@ -164,7 +166,7 @@
     return taskCol().add(Object.assign({
       title: '', notes: '', projectId: null, status: 'todo', priority: '',
       due: '', dueTime: '', reminderMode: 'none', reminderAt: null, reminded: false,
-      completedAt: null, createdAt: now, updatedAt: now
+      completedAt: null, createdAt: now, updatedAt: now, order: now
     }, data)).catch(fail);
   }
   function updateTask(id, patch) {
@@ -310,6 +312,9 @@
     return (a.createdAt || 0) - (b.createdAt || 0);
   }
   const sortDone = (a, b) => (b.completedAt || 0) - (a.completedAt || 0);
+  /* Manual order: tasks dragged in the table carry `order`; older ones fall back to creation time */
+  const orderOf = t => t.order ?? t.createdAt ?? 0;
+  const sortManual = (a, b) => orderOf(a) - orderOf(b);
 
   /* Groups for the table: by project in smart views, open/done inside a project */
   function buildGroups(list) {
@@ -317,7 +322,7 @@
     if (v.kind === 'project') {
       const p = projectOf(v.id);
       return [
-        { key: `p:${p.id}:open`, name: 'To do', color: p.color, projectId: p.id, tasks: list.filter(t => !isDone(t)).sort(sortOpen), canAdd: true },
+        { key: `p:${p.id}:open`, name: 'To do', color: p.color, projectId: p.id, tasks: list.filter(t => !isDone(t)).sort(sortManual), canAdd: true, reorder: !search },
         { key: `p:${p.id}:done`, name: 'Completed', color: '#00c875', projectId: p.id, tasks: list.filter(isDone).sort(sortDone), canAdd: false, defaultCollapsed: true }
       ];
     }
@@ -325,12 +330,14 @@
     const groups = [...projects, NO_PROJECT].map(p => ({
       key: `${v.id}:${p.id}`, name: p.name, color: p.color, projectId: p.id, link: !!p.id,
       tasks: list.filter(t => (t.projectId || null) === p.id && projectOf(t.projectId) === (p.id ? p : null))
-        .sort(v.id === 'completed' ? sortDone : (a, b) => (isDone(a) - isDone(b)) || sortOpen(a, b)),
-      canAdd: v.id !== 'completed'
+        .sort(v.id === 'completed' ? sortDone : v.id === 'all' ? (a, b) => (isDone(a) - isDone(b)) || sortManual(a, b) : (a, b) => (isDone(a) - isDone(b)) || sortOpen(a, b)),
+      canAdd: v.id !== 'completed',
+      reorder: v.id === 'all' && !search
     }));
     // Orphans (project deleted on another device) fall into "No project"
     const orphans = list.filter(t => t.projectId && !projectOf(t.projectId));
-    groups[groups.length - 1].tasks.push(...orphans);
+    const loose = groups[groups.length - 1];
+    if (orphans.length) { loose.tasks.push(...orphans); loose.reorder = false; }
     return groups.filter(g => g.tasks.length || (showEmpty && g.projectId));
   }
 
@@ -402,11 +409,14 @@
      put the caret back where it was so rapid entry keeps working. */
   const ADD_ATTRS = ['data-add-sub', 'data-add-project', 'data-add-status', 'data-add-date'];
   function renderBody() {
+    if (rowDrag) { rowDrag.pendingRender = true; return; }
     const body = $('#mainBody');
     const a = document.activeElement;
     const attr = a && body.contains(a) && ADD_ATTRS.find(n => a.hasAttribute(n));
     const keep = attr && { sel: `[${attr}="${CSS.escape(a.getAttribute(attr))}"]`, value: a.value, pos: a.selectionStart };
+    const handleOf = a && body.contains(a) && a.matches('[data-drag]') && a.closest('.trow.task')?.dataset.id;
     renderBodyInner(body);
+    if (handleOf) $(`.trow.task[data-id="${handleOf}"] [data-drag]`, body)?.focus();
     if (keep) {
       const el = $(keep.sel, body);
       if (el) { el.value = keep.value; el.focus(); el.setSelectionRange(keep.pos, keep.pos); }
@@ -450,7 +460,7 @@
       return n ? `<span style="width:${(n / total) * 100}%;background:${s.color}" title="${s.label}: ${n}"></span>` : '';
     }).join('') : '';
     return `
-    <section class="group ${collapsed ? 'collapsed' : ''}" data-group="${esc(g.key)}" style="--gc:${esc(g.color)}">
+    <section class="group ${collapsed ? 'collapsed' : ''} ${g.reorder ? 'reorderable' : ''}" data-group="${esc(g.key)}" data-group-project="${g.projectId ?? ''}" style="--gc:${esc(g.color)}">
       <div class="group-head">
         <button class="group-toggle" data-action="toggle-group" style="color:${esc(g.color)}" aria-label="Collapse group">${CARET_ICON}</button>
         <button class="group-name ${g.link ? 'link' : ''}" ${g.link ? `data-project="${g.projectId}"` : ''} style="color:${esc(g.color)}">${esc(g.name)}</button>
@@ -493,7 +503,10 @@
     return `
     <div class="trow task ${isDone(t) ? 'done' : ''} ${subsOpen ? 'subs-open' : ''}" data-id="${t.id}">
       <div class="bar" style="background:${esc(g.color)}"></div>
-      <div class="c-check"><input type="checkbox" data-action="toggle-done" ${isDone(t) ? 'checked' : ''} aria-label="Mark complete"></div>
+      <div class="c-check">
+        ${g.reorder && !isDone(t) ? `<button class="drag-handle" data-drag aria-label="Drag to reorder (or focus and use arrow keys)" title="Drag to reorder">${GRIP_ICON}</button>` : '<span class="drag-spacer"></span>'}
+        <input type="checkbox" data-action="toggle-done" ${isDone(t) ? 'checked' : ''} aria-label="Mark complete">
+      </div>
       <div class="c-title" data-action="open">
         ${subs.length
           ? `<button class="sub-caret" data-action="toggle-subs" aria-label="${subsOpen ? 'Hide' : 'Show'} subtasks" aria-expanded="${subsOpen}">${CARET_ICON}</button>`
@@ -870,6 +883,146 @@
     if (v.kind === 'smart' && v.id === 'upcoming') data.due = addDays(todayStr(), 1);
     createTask(data);
     inp.value = '';
+  });
+
+  /* ── Table row reordering ──
+     Pointer events (not HTML5 drag) so it also works on touch screens.
+     Order values are spaced numbers; a drop takes the midpoint of its new neighbours,
+     and a group is renumbered only when two neighbours get too close. */
+  function groupTaskIds(groupEl, exceptId) {
+    return $$('.trow.task', groupEl).map(r => r.dataset.id).filter(id => id !== exceptId);
+  }
+  function moveTask(t, groupEl, index) {
+    const ids = groupTaskIds(groupEl, t.id);
+    const list = ids.map(id => tasks.find(x => x.id === id)).filter(x => x && !isDone(x));
+    index = Math.max(0, Math.min(index, list.length));
+    const before = list[index - 1], after = list[index];
+    let order;
+    if (before && after) order = (orderOf(before) + orderOf(after)) / 2;
+    else if (before) order = orderOf(before) + 1024;
+    else if (after) order = orderOf(after) - 1024;
+    else order = Date.now();
+    const patch = { order };
+    const target = groupEl.dataset.groupProject || null;
+    if (prefs.view.kind !== 'project' && (t.projectId || null) !== target) patch.projectId = target;
+
+    const tooClose = before && after && Math.abs(orderOf(after) - orderOf(before)) < 1e-6;
+    if (tooClose) {
+      const seq = [...list]; seq.splice(index, 0, t);
+      const batch = db.batch();
+      seq.forEach((x, i) => {
+        x.order = (i + 1) * 1024;
+        batch.update(taskCol().doc(x.id), x === t ? { ...patch, order: x.order, updatedAt: Date.now() } : { order: x.order });
+      });
+      if (patch.projectId !== undefined) t.projectId = patch.projectId;
+      batch.commit().catch(fail);
+    } else {
+      Object.assign(t, patch);   // optimistic, so the row lands without waiting for the snapshot
+      updateTask(t.id, patch);
+    }
+    if (patch.projectId !== undefined) {
+      const p = projectOf(patch.projectId);
+      toast(`Moved to ${p ? p.name : 'No project'}`);
+    }
+  }
+
+  function clearDropMarks() { $$('.drop-before, .drop-after, .drop-into', body).forEach(el => el.classList.remove('drop-before', 'drop-after', 'drop-into')); }
+
+  function findDrop(x, y) {
+    const el = document.elementFromPoint(x, y);
+    const groupEl = el?.closest('.group.reorderable');
+    if (!groupEl || groupEl.classList.contains('collapsed')) return null;
+    let row = el.closest('.trow.task, .trow.sub, .trow.add-row');
+    if (!row) {
+      // Over the group header or the summary row: top or end of the group
+      const head = el.closest('.group-head, .thead');
+      return { groupEl, index: head ? 0 : groupTaskIds(groupEl, rowDrag.id).length, mark: head ? $('.trow.task:not(.dragging)', groupEl) : $('.add-row', groupEl), side: head ? 'before' : 'into' };
+    }
+    if (row.classList.contains('add-row')) return { groupEl, index: groupTaskIds(groupEl, rowDrag.id).length, mark: row, side: 'into' };
+    // A subtask row counts as the bottom half of its parent task
+    let after = true;
+    if (row.classList.contains('task')) {
+      const r = row.getBoundingClientRect();
+      after = y > r.top + r.height / 2;
+    } else {
+      const id = row.dataset.id;
+      const subs = $$(`.trow.sub[data-id="${id}"]`, groupEl);
+      row = subs[subs.length - 1];
+    }
+    const taskId = row.dataset.id;
+    if (taskId === rowDrag.id) return null;
+    const ids = groupTaskIds(groupEl, rowDrag.id);
+    const i = ids.indexOf(taskId);
+    if (i < 0) return null;
+    const task = tasks.find(x => x.id === taskId);
+    if (task && isDone(task)) return { groupEl, index: ids.filter(id => !isDone(tasks.find(x => x.id === id))).length, mark: $('.add-row', groupEl), side: 'into' };
+    return { groupEl, index: after ? i + 1 : i, mark: row, side: after ? 'after' : 'before' };
+  }
+
+  body.addEventListener('pointerdown', e => {
+    const handle = e.target.closest('[data-drag]');
+    if (!handle || e.button !== 0) return;
+    e.preventDefault();
+    const row = handle.closest('.trow.task');
+    const t = tasks.find(x => x.id === row.dataset.id);
+    if (!t) return;
+    const rect = row.getBoundingClientRect();
+    const ghost = row.cloneNode(true);
+    ghost.classList.add('drag-ghost');
+    ghost.style.width = rect.width + 'px';
+    ghost.style.left = rect.left + 'px';
+    ghost.style.top = rect.top + 'px';
+    document.body.appendChild(ghost);
+    rowDrag = { id: t.id, t, row, ghost, offsetY: e.clientY - rect.top, startY: e.clientY, drop: null, lastY: e.clientY, pendingRender: false };
+    row.classList.add('dragging');
+    $$(`.trow.sub[data-id="${t.id}"]`, body).forEach(r => r.classList.add('dragging'));
+    document.body.classList.add('row-dragging');
+    handle.setPointerCapture(e.pointerId);
+    rowDrag.scroller = setInterval(() => {
+      if (!rowDrag) return;
+      const y = rowDrag.lastY, edge = 70;
+      if (y < edge + 56) window.scrollBy(0, -12);
+      else if (y > innerHeight - edge) window.scrollBy(0, 12);
+    }, 16);
+  });
+  body.addEventListener('pointermove', e => {
+    if (!rowDrag) return;
+    rowDrag.lastY = e.clientY;
+    rowDrag.ghost.style.top = (e.clientY - rowDrag.offsetY) + 'px';
+    clearDropMarks();
+    rowDrag.drop = findDrop(e.clientX, e.clientY);
+    const d = rowDrag.drop;
+    if (d?.mark) d.mark.classList.add('drop-' + d.side);
+  });
+  function endRowDrag(commit) {
+    if (!rowDrag) return;
+    const { t, ghost, drop, scroller, pendingRender, startY, lastY } = rowDrag;
+    clearInterval(scroller);
+    ghost.remove();
+    clearDropMarks();
+    document.body.classList.remove('row-dragging');
+    rowDrag = null;
+    if (commit && drop && Math.abs(lastY - startY) > 3) moveTask(t, drop.groupEl, drop.index);
+    renderBody();
+    if (!commit && pendingRender) renderBody();
+  }
+  body.addEventListener('pointerup', () => endRowDrag(true));
+  body.addEventListener('pointercancel', () => endRowDrag(false));
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && rowDrag) endRowDrag(false); });
+
+  // Keyboard: focus the handle, then ArrowUp / ArrowDown
+  body.addEventListener('keydown', e => {
+    const handle = e.target.closest?.('[data-drag]');
+    if (!handle || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+    e.preventDefault();
+    const row = handle.closest('.trow.task'), groupEl = row.closest('.group');
+    const t = tasks.find(x => x.id === row.dataset.id);
+    const ids = groupTaskIds(groupEl, null).filter(id => !isDone(tasks.find(x => x.id === id)));
+    const i = ids.indexOf(t.id) + (e.key === 'ArrowUp' ? -1 : 1);
+    if (i < 0 || i >= ids.length) return;
+    moveTask(t, groupEl, i);
+    renderBody();
+    $(`.trow.task[data-id="${t.id}"] [data-drag]`, body)?.focus();
   });
 
   /* Kanban drag & drop */

@@ -265,7 +265,7 @@ input[type=checkbox]:checked::after { transform: rotate(45deg) scale(1); }
 .table { min-width: 860px; border-radius: var(--radius) 0 0 var(--radius); overflow: hidden; }
 .trow {
   display: grid;
-  grid-template-columns: 6px 40px minmax(240px, 1fr) 140px 120px 150px 150px 40px;
+  grid-template-columns: 6px 52px minmax(240px, 1fr) 140px 120px 150px 150px 40px;
   min-height: 38px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
@@ -329,6 +329,34 @@ input[type=checkbox]:checked::after { transform: rotate(45deg) scale(1); }
 .summary-row > div { border-right: 0; }
 .status-bar { display: flex; height: 22px; width: calc(100% - 16px); margin: 6px 8px; border-radius: 2px; overflow: hidden; background: var(--surface-2); }
 .status-bar span { display: block; height: 100%; }
+
+/* ── Row drag to reorder ── */
+.c-check { gap: 2px; }
+.drag-handle, .drag-spacer { width: 18px; height: 26px; flex-shrink: 0; }
+.drag-handle {
+  display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--radius-sm);
+  background: none; color: var(--muted); cursor: grab; touch-action: none; opacity: 0;
+}
+.trow.task:hover .drag-handle, .drag-handle:focus-visible { opacity: 1; }
+.drag-handle:hover { background: var(--hover); color: var(--text); }
+.drag-handle:focus-visible { outline: 2px solid var(--primary); }
+@media (hover: none) { .drag-handle { opacity: .7; } }
+body.row-dragging, body.row-dragging * { cursor: grabbing !important; user-select: none; }
+.trow.dragging { opacity: .35; }
+.drag-ghost {
+  position: fixed; z-index: 80; pointer-events: none; margin: 0;
+  box-shadow: var(--shadow-2); border-radius: var(--radius-sm); opacity: .95;
+  outline: 2px solid var(--primary);
+}
+.drag-ghost .drag-handle { opacity: 1; }
+.trow.drop-before, .trow.drop-after, .trow.drop-into { position: relative; }
+.trow.drop-before::after, .trow.drop-after::after, .trow.drop-into::after {
+  content: ""; position: absolute; left: 6px; right: 0; height: 3px; border-radius: 2px;
+  background: var(--primary); box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 25%, transparent);
+  pointer-events: none; z-index: 2;
+}
+.trow.drop-before::after, .trow.drop-into::after { top: -2px; }
+.trow.drop-after::after { bottom: -2px; }
 
 /* ── Critical status mark ── */
 .pick, .pop-opt, .mini-pill { display: inline-flex; align-items: center; justify-content: center; }
