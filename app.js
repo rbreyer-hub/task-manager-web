@@ -11,14 +11,14 @@
     { id: 'todo',    label: 'Not started',   color: '#c4c4c4' },
     { id: 'working', label: 'Working on it', color: '#fdab3d' },
     { id: 'stuck',   label: 'Stuck',         color: '#e2445c' },
-    { id: 'critical', label: 'Critical',     color: '#b0122b', alert: true },
     { id: 'done',    label: 'Done',          color: '#00c875' }
   ];
   const PRIORITIES = [
     { id: '',       label: 'None',   color: '' },
     { id: 'low',    label: 'Low',    color: '#579bfc' },
     { id: 'medium', label: 'Medium', color: '#5559df' },
-    { id: 'high',   label: 'High',   color: '#401694' }
+    { id: 'high',     label: 'High',     color: '#401694' },
+    { id: 'critical', label: 'Critical', color: '#b0122b', alert: true }
   ];
   const PROJECT_COLORS = [
     '#579bfc', '#a25ddc', '#00c875', '#fdab3d', '#e2445c',
@@ -231,6 +231,12 @@
     }, e => { console.error(e); toast('Sync error: ' + e.code); }));
     unsubs.push(taskCol().onSnapshot(snap => {
       tasks = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      // Critical briefly shipped as a status; it's a priority now
+      tasks.filter(t => t.status === 'critical').forEach(t => {
+        const status = t.prevStatus && t.prevStatus !== 'critical' && t.prevStatus !== 'done' ? t.prevStatus : 'todo';
+        t.status = status; t.priority = 'critical';
+        updateTask(t.id, { status, priority: 'critical' });
+      });
       loaded.tasks = true;
       onData();
     }, e => { console.error(e); toast('Sync error: ' + e.code); }));
@@ -499,7 +505,7 @@
         <span class="t-open">Open</span>
       </div>
       <div><button class="pill" data-action="status" style="background:${st.color}">${labelHtml(st)}</button></div>
-      <div><button class="pill ${pr.id ? '' : 'empty'}" data-action="priority" style="${pr.id ? `background:${pr.color}` : ''}">${pr.id ? pr.label : ''}</button></div>
+      <div><button class="pill ${pr.id ? '' : 'empty'}" data-action="priority" style="${pr.id ? `background:${pr.color}` : ''}">${pr.id ? labelHtml(pr) : ''}</button></div>
       <div class="c-due" data-action="due">
         <span class="due-label ${t.due ? dueCls : 'empty'}">${t.due ? esc(fmtDue(t)) : '—'}</span>
         <input type="date" class="due-input" value="${esc(t.due || '')}" tabindex="-1" aria-label="Due date">
@@ -650,7 +656,7 @@
       <div class="card-meta">
         ${proj && prefs.view.kind !== 'project' ? `<span>${esc(proj.name)}</span>` : ''}
         ${t.due ? `<span class="due-label ${dueCls}">${esc(fmtDue(t))}</span>` : ''}
-        ${pr.id ? `<span class="mini-pill" style="background:${pr.color}">${pr.label}</span>` : ''}
+        ${pr.id ? `<span class="mini-pill" style="background:${pr.color}">${labelHtml(pr)}</span>` : ''}
         ${t.reminderAt && !t.reminded ? `<span title="Reminder ${esc(fmtReminder(t.reminderAt))}">${BELL_ICON}</span>` : ''}
         ${t.notes ? `<span>${NOTES_ICON}</span>` : ''}
         ${subsOf(t).length ? `<span class="card-subs" title="Subtasks">${CHECKLIST_ICON}${subsOf(t).filter(st => st.done).length}/${subsOf(t).length}</span>` : ''}
@@ -937,7 +943,7 @@
     $('#fStatus').innerHTML = STATUSES.map(s =>
       `<button type="button" class="pick ${draft.status === s.id ? 'sel' : ''}" data-status="${s.id}" style="background:${s.color}">${labelHtml(s)}</button>`).join('');
     $('#fPriority').innerHTML = PRIORITIES.map(p =>
-      `<button type="button" class="pick ${p.color ? '' : 'none'} ${(draft.priority || '') === p.id ? 'sel' : ''}" data-priority="${p.id}" style="${p.color ? `background:${p.color}` : ''}">${p.label}</button>`).join('');
+      `<button type="button" class="pick ${p.color ? '' : 'none'} ${(draft.priority || '') === p.id ? 'sel' : ''}" data-priority="${p.id}" style="${p.color ? `background:${p.color}` : ''}">${labelHtml(p)}</button>`).join('');
   }
   /* Drawer checklist. Changes to an existing task save immediately, like checking a box should;
      a new task keeps them in the draft until Save. */
