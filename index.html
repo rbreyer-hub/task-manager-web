@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="styles.css?v=20261104a">
+<link rel="stylesheet" href="styles.css?v=20261104b">
 </head>
 <body>
 
@@ -93,6 +93,10 @@
             <svg viewBox="0 0 24 24" width="15" height="15"><rect x="3" y="4" width="5" height="16" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/><rect x="10" y="4" width="5" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/><rect x="17" y="4" width="4" height="13" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>
             Kanban
           </button>
+          <button class="tab" data-mode="calendar" role="tab">
+            <svg viewBox="0 0 24 24" width="15" height="15"><rect x="3" y="5" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 10h18M8 3v4M16 3v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            Calendar
+          </button>
         </div>
         <button class="btn btn-primary" id="newTaskBtn">New task</button>
       </div>
@@ -143,6 +147,14 @@
         </div>
       </div>
 
+      <div class="block-label sub-head">
+        <span>Subtasks</span>
+        <span id="subCount"></span>
+      </div>
+      <div class="sub-progress" id="subProgress" hidden><span></span></div>
+      <ul class="sub-list" id="subList"></ul>
+      <input id="subAdd" class="sub-add" placeholder="+ Add subtask, press Enter" maxlength="200">
+
       <label class="block-label" for="fNotes">Notes</label>
       <textarea id="fNotes" rows="6" placeholder="Add details, links, checklists…"></textarea>
 
@@ -183,6 +195,6 @@
 <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore-compat.js"></script>
 <script src="firebase-config.js"></script>
-<script src="app.js?v=20261104a"></script>
+<script src="app.js?v=20261104b"></script>
 </body>
 </html>

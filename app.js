@@ -11,6 +11,7 @@
     { id: 'todo',    label: 'Not started',   color: '#c4c4c4' },
     { id: 'working', label: 'Working on it', color: '#fdab3d' },
     { id: 'stuck',   label: 'Stuck',         color: '#e2445c' },
+    { id: 'critical', label: 'Critical',     color: '#b0122b', alert: true },
     { id: 'done',    label: 'Done',          color: '#00c875' }
   ];
   const PRIORITIES = [
@@ -34,6 +35,8 @@
   const BELL_ICON  = '<svg viewBox="0 0 24 24" width="14" height="14"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8M10 20a2 2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   const CARET_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   const DOTS_ICON  = '<svg viewBox="0 0 24 24" width="16" height="16"><circle cx="5" cy="12" r="1.8" fill="currentColor"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><circle cx="19" cy="12" r="1.8" fill="currentColor"/></svg>';
+  const CHECKLIST_ICON = '<svg viewBox="0 0 24 24" width="14" height="14"><rect x="3" y="3" width="18" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 12l3 3 5-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const X_ICON = '<svg viewBox="0 0 24 24" width="14" height="14"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
   const PREFS_KEY = 'taskBoard.prefs';
   const NO_PROJECT = { id: null, name: 'No project', color: '#9aadbd' };
 
@@ -47,10 +50,11 @@
   let editingTaskId = null;
   let editingProjectId = null;
   let draft = null;          // task being edited in the drawer
-  let prefs = loadPrefs();   // { view, mode, collapsed: {} }
+  let addingSubFor = null;   // task id whose table row shows an "add subtask" input with no subtasks yet
+  let prefs = loadPrefs();   // { view, mode, collapsed: {}, subsCollapsed: {} }
 
   function loadPrefs() {
-    const def = { view: { kind: 'smart', id: 'today' }, mode: 'table', collapsed: {} };
+    const def = { view: { kind: 'smart', id: 'today' }, mode: 'table', collapsed: {}, subsCollapsed: {} };
     try { return Object.assign(def, JSON.parse(localStorage.getItem(PREFS_KEY)) || {}); }
     catch (_) { return def; }
   }
@@ -71,6 +75,13 @@
   const priorityOf = id => PRIORITIES.find(p => p.id === (id || '')) || PRIORITIES[0];
   const projectOf = id => projects.find(p => p.id === id) || null;
   const isDone = t => t.status === 'done';
+  const ALERT_ICON = '<span class="alert-mark" aria-hidden="true">!</span>';
+  const labelHtml = o => (o.alert ? ALERT_ICON : '') + o.label;
+  const subsOf = t => Array.isArray(t.subtasks) ? t.subtasks : [];
+  const newSubId = () => Math.random().toString(36).slice(2, 10);
+
+  let calSelected = todayStr();            // day whose tasks list beside the grid
+  let calMonth = calSelected.slice(0, 7);  // 'YYYY-MM' shown in the calendar
 
   const userDoc = () => db.collection('users').doc(user.uid);
   const projCol = () => userDoc().collection('projects');
@@ -176,6 +187,29 @@
     if (isDone(t)) setStatus(t, t.prevStatus && t.prevStatus !== 'done' ? t.prevStatus : 'todo');
     else { setStatus(t, 'done'); toast('Nice work — task completed', { action: 'Undo', onAction: () => setStatus({ ...t, status: 'done' }, t.status) }); }
   }
+  /* Subtasks live on the task doc as [{ id, title, done }] */
+  function saveSubtasks(t, subs) {
+    t.subtasks = subs;   // keep the local copy current until the snapshot lands
+    return updateTask(t.id, { subtasks: subs });
+  }
+  function toggleSubtask(t, subId) {
+    const subs = subsOf(t).map(st => st.id === subId ? { ...st, done: !st.done } : st);
+    saveSubtasks(t, subs);
+    if (!isDone(t) && subs.length > 1 && subs.every(st => st.done) && subs.find(st => st.id === subId).done) {
+      toast('All subtasks checked off', { action: 'Complete task', onAction: () => setStatus(t, 'done') });
+    }
+  }
+  function addSubtask(t, title) {
+    return saveSubtasks(t, [...subsOf(t), { id: newSubId(), title, done: false }]);
+  }
+  function renameSubtask(t, subId, title) {
+    if (!title) return removeSubtask(t, subId);
+    saveSubtasks(t, subsOf(t).map(st => st.id === subId ? { ...st, title } : st));
+  }
+  function removeSubtask(t, subId) {
+    saveSubtasks(t, subsOf(t).filter(st => st.id !== subId));
+  }
+
   /* Keep reminder in sync when the due date changes inline */
   function setDue(t, due) {
     const patch = { due };
@@ -259,7 +293,8 @@
     else if (v.id === 'completed') list = list.filter(isDone);
     if (search) {
       const q = search.toLowerCase();
-      list = list.filter(t => t.title.toLowerCase().includes(q) || (t.notes || '').toLowerCase().includes(q));
+      list = list.filter(t => t.title.toLowerCase().includes(q) || (t.notes || '').toLowerCase().includes(q) ||
+        subsOf(t).some(st => st.title.toLowerCase().includes(q)));
     }
     return list;
   }
@@ -291,6 +326,13 @@
     const orphans = list.filter(t => t.projectId && !projectOf(t.projectId));
     groups[groups.length - 1].tasks.push(...orphans);
     return groups.filter(g => g.tasks.length || (showEmpty && g.projectId));
+  }
+
+  /* Each project keeps its own layout (saved on the project doc, so it follows you across devices);
+     the My Work views share one layout kept in local prefs. */
+  function currentMode() {
+    const v = prefs.view;
+    return v.kind === 'project' ? (projectOf(v.id)?.layout || 'table') : prefs.mode;
   }
 
   /* ── Render ── */
@@ -346,14 +388,28 @@
     };
     $('#mainSub').textContent = p
       ? `${open} open · ${list.length - open} completed`
-      : subs[v.id];
-    $$('.tab').forEach(tb => tb.classList.toggle('active', tb.dataset.mode === prefs.mode));
+      : currentMode() === 'calendar' ? 'Every task with a due date. Click a day to see what\'s due.' : subs[v.id];
+    $$('.tab').forEach(tb => tb.classList.toggle('active', tb.dataset.mode === currentMode()));
   }
 
+  /* Snapshots re-render the body while someone may be typing in an add box;
+     put the caret back where it was so rapid entry keeps working. */
+  const ADD_ATTRS = ['data-add-sub', 'data-add-project', 'data-add-status', 'data-add-date'];
   function renderBody() {
     const body = $('#mainBody');
+    const a = document.activeElement;
+    const attr = a && body.contains(a) && ADD_ATTRS.find(n => a.hasAttribute(n));
+    const keep = attr && { sel: `[${attr}="${CSS.escape(a.getAttribute(attr))}"]`, value: a.value, pos: a.selectionStart };
+    renderBodyInner(body);
+    if (keep) {
+      const el = $(keep.sel, body);
+      if (el) { el.value = keep.value; el.focus(); el.setSelectionRange(keep.pos, keep.pos); }
+    }
+  }
+  function renderBodyInner(body) {
     const list = viewTasks();
-    if (prefs.mode === 'board') { body.innerHTML = renderBoard(list); return; }
+    if (currentMode() === 'board') { body.innerHTML = renderBoard(list); return; }
+    if (currentMode() === 'calendar') { body.innerHTML = renderCalendar(); return; }
 
     const groups = buildGroups(list);
     if (!groups.length) { body.innerHTML = renderEmpty(); return; }
@@ -425,17 +481,24 @@
     const showProj = prefs.view.kind === 'project' ? false : g.projectId !== (t.projectId || null) && proj;
     const dueCls = isOverdue(t) ? 'overdue' : t.due === todayStr() && !isDone(t) ? 'today' : '';
     const hasRem = t.reminderAt && t.reminderMode !== 'none';
+    const subs = subsOf(t);
+    const subsOpen = subs.length ? !prefs.subsCollapsed[t.id] : addingSubFor === t.id;
+    const subsDone = subs.filter(st => st.done).length;
     return `
-    <div class="trow task ${isDone(t) ? 'done' : ''}" data-id="${t.id}">
+    <div class="trow task ${isDone(t) ? 'done' : ''} ${subsOpen ? 'subs-open' : ''}" data-id="${t.id}">
       <div class="bar" style="background:${esc(g.color)}"></div>
       <div class="c-check"><input type="checkbox" data-action="toggle-done" ${isDone(t) ? 'checked' : ''} aria-label="Mark complete"></div>
       <div class="c-title" data-action="open">
+        ${subs.length
+          ? `<button class="sub-caret" data-action="toggle-subs" aria-label="${subsOpen ? 'Hide' : 'Show'} subtasks" aria-expanded="${subsOpen}">${CARET_ICON}</button>`
+          : '<span class="sub-caret-spacer"></span>'}
         <span class="t-text">${esc(t.title)}</span>
+        ${subs.length ? `<button class="t-subs ${subsDone === subs.length ? 'all' : ''}" data-action="toggle-subs" title="Subtasks">${CHECKLIST_ICON}${subsDone}/${subs.length}</button>` : ''}
         ${t.notes ? `<span class="t-notes" title="Has notes">${NOTES_ICON}</span>` : ''}
         ${showProj ? `<span class="t-proj">${esc(proj.name)}</span>` : ''}
         <span class="t-open">Open</span>
       </div>
-      <div><button class="pill" data-action="status" style="background:${st.color}">${st.label}</button></div>
+      <div><button class="pill" data-action="status" style="background:${st.color}">${labelHtml(st)}</button></div>
       <div><button class="pill ${pr.id ? '' : 'empty'}" data-action="priority" style="${pr.id ? `background:${pr.color}` : ''}">${pr.id ? pr.label : ''}</button></div>
       <div class="c-due" data-action="due">
         <span class="due-label ${t.due ? dueCls : 'empty'}">${t.due ? esc(fmtDue(t)) : '—'}</span>
@@ -445,7 +508,22 @@
         ${hasRem ? `${BELL_ICON}<span>${esc(fmtReminder(t.reminderAt))}</span>` : '<span>—</span>'}
       </div>
       <div class="c-more"><button class="icon-btn sm" data-action="more" aria-label="More">${DOTS_ICON}</button></div>
-    </div>`;
+    </div>
+    ${subsOpen ? subs.map(st => `
+    <div class="trow sub ${st.done ? 'done' : ''}" data-id="${t.id}" data-sub="${esc(st.id)}">
+      <div class="bar" style="background:${esc(g.color)}"></div>
+      <div class="c-check"></div>
+      <div class="c-sub">
+        <input type="checkbox" data-action="sub-toggle" ${st.done ? 'checked' : ''} aria-label="Mark subtask complete">
+        <span class="s-text" data-action="sub-edit" title="Click to rename">${esc(st.title)}</span>
+        <button class="icon-btn sm s-del" data-action="sub-delete" aria-label="Delete subtask">${X_ICON}</button>
+      </div>
+    </div>`).join('') + `
+    <div class="trow sub add-sub" data-id="${t.id}">
+      <div class="bar" style="background:${esc(g.color)};opacity:.5"></div>
+      <div class="c-check"></div>
+      <div class="c-sub"><input data-add-sub="${t.id}" placeholder="+ Add subtask" maxlength="200"></div>
+    </div>` : ''}`;
   }
 
   function renderBoard(list) {
@@ -455,11 +533,112 @@
       const col = list.filter(t => (t.status || 'todo') === s.id).sort(s.id === 'done' ? sortDone : sortOpen);
       return `
       <div class="column" data-status="${s.id}">
-        <div class="column-head" style="background:${s.color}"><span>${s.label}</span><span>${col.length}</span></div>
+        <div class="column-head" style="background:${s.color}"><span>${labelHtml(s)}</span><span>${col.length}</span></div>
         <div class="column-body">${col.map(renderCard).join('')}</div>
         ${v.id !== 'completed' || v.kind === 'project' ? `<div class="column-add"><input data-add-status="${s.id}" placeholder="+ Add task" maxlength="200"></div>` : ''}
       </div>`;
     }).join('')}</div>`;
+  }
+
+  /* ── Calendar ──
+     Ignores the Today/Upcoming/Overdue filters so every dated task shows up;
+     a project view still narrows it to that project. */
+  function calendarTasks() {
+    const v = prefs.view;
+    let list = tasks.filter(t => t.due);
+    if (v.kind === 'project') list = list.filter(t => t.projectId === v.id);
+    if (search) {
+      const q = search.toLowerCase();
+      list = list.filter(t => t.title.toLowerCase().includes(q) || (t.notes || '').toLowerCase().includes(q));
+    }
+    return list;
+  }
+  function renderCalendar() {
+    const byDay = {};
+    calendarTasks().forEach(t => (byDay[t.due] ||= []).push(t));
+    Object.values(byDay).forEach(l => l.sort((a, b) => (isDone(a) - isDone(b)) || sortOpen(a, b)));
+
+    const [y, m] = calMonth.split('-').map(Number);
+    const first = new Date(y, m - 1, 1);
+    const start = new Date(y, m - 1, 1 - first.getDay());   // weeks start Sunday
+    const weeks = Math.ceil((first.getDay() + new Date(y, m, 0).getDate()) / 7);
+    const today = todayStr();
+    const dows = [...Array(7)].map((_, i) => new Date(2026, 0, 4 + i).toLocaleDateString(undefined, { weekday: 'short' }));
+
+    let cells = '';
+    for (let i = 0; i < weeks * 7; i++) {
+      const d = new Date(start); d.setDate(start.getDate() + i);
+      const ds = ymd(d), list = byDay[ds] || [];
+      const open = list.filter(t => !isDone(t));
+      const late = ds < today && open.length;
+      cells += `
+      <button class="cal-day ${d.getMonth() !== m - 1 ? 'other' : ''} ${ds === today ? 'today' : ''} ${ds === calSelected ? 'sel' : ''}"
+        data-action="cal-day" data-date="${ds}" aria-label="${d.toDateString()}, ${list.length} due">
+        <span class="cal-num">${d.getDate()}</span>
+        ${list.length ? `<span class="cal-badge ${late ? 'late' : ''}">${open.length || '✓'}</span>` : ''}
+        <span class="cal-chips">
+          ${list.slice(0, 3).map(t => {
+            const p = projectOf(t.projectId);
+            return `<span class="cal-chip ${isDone(t) ? 'done' : ''} ${isOverdue(t) ? 'late' : ''}" style="--cc:${p ? esc(p.color) : '#9aadbd'}">${esc(t.title)}</span>`;
+          }).join('')}
+          ${list.length > 3 ? `<span class="cal-more">+${list.length - 3} more</span>` : ''}
+        </span>
+      </button>`;
+    }
+    return `
+    <div class="calendar">
+      <div class="cal-main">
+        <div class="cal-head">
+          <button class="icon-btn" data-action="cal-prev" aria-label="Previous month"><svg viewBox="0 0 24 24" width="18" height="18"><path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <h3>${first.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</h3>
+          <button class="icon-btn" data-action="cal-next" aria-label="Next month"><svg viewBox="0 0 24 24" width="18" height="18"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <button class="btn btn-ghost" data-action="cal-today">Today</button>
+        </div>
+        <div class="cal-grid">
+          ${dows.map(w => `<div class="cal-dow">${w}</div>`).join('')}
+          ${cells}
+        </div>
+      </div>
+      ${renderDayPanel(byDay[calSelected] || [])}
+    </div>`;
+  }
+  function renderDayPanel(list) {
+    const d = parseDate(calSelected), today = todayStr();
+    const rel = calSelected === today ? 'Today' : calSelected === addDays(today, 1) ? 'Tomorrow' : calSelected === addDays(today, -1) ? 'Yesterday' : '';
+    return `
+    <aside class="day-panel">
+      <div class="day-head">
+        <div class="day-rel">${rel}</div>
+        <h3>${d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</h3>
+        <div class="day-count">${list.length ? `${list.filter(t => !isDone(t)).length} open · ${list.filter(isDone).length} done` : 'Nothing due'}</div>
+      </div>
+      <ul class="day-list">
+        ${list.map(t => {
+          const st = statusOf(t.status), p = projectOf(t.projectId), subs = subsOf(t);
+          return `
+          <li class="day-item ${isDone(t) ? 'done' : ''}" data-id="${t.id}" style="--cc:${p ? esc(p.color) : '#9aadbd'}">
+            <input type="checkbox" data-action="toggle-done" ${isDone(t) ? 'checked' : ''} aria-label="Mark complete">
+            <div class="day-body" data-action="open">
+              <div class="day-title">${esc(t.title)}</div>
+              <div class="day-meta">
+                ${p ? `<span><i class="proj-dot" style="background:${esc(p.color)}"></i>${esc(p.name)}</span>` : ''}
+                ${t.dueTime ? `<span>${fmtTime(t.dueTime)}</span>` : ''}
+                ${subs.length ? `<span>${CHECKLIST_ICON}${subs.filter(x => x.done).length}/${subs.length}</span>` : ''}
+                ${t.reminderAt && !t.reminded ? `<span>${BELL_ICON}</span>` : ''}
+              </div>
+            </div>
+            <button class="mini-pill status-chip" data-action="status" style="background:${st.color}">${labelHtml(st)}</button>
+          </li>`;
+        }).join('')}
+      </ul>
+      <input class="day-add" data-add-date="${calSelected}" placeholder="+ Add task on this day" maxlength="200">
+    </aside>`;
+  }
+  function shiftMonth(n) {
+    const [y, m] = calMonth.split('-').map(Number);
+    const d = new Date(y, m - 1 + n, 1);
+    calMonth = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+    renderBody();
   }
 
   function renderCard(t) {
@@ -474,7 +653,9 @@
         ${pr.id ? `<span class="mini-pill" style="background:${pr.color}">${pr.label}</span>` : ''}
         ${t.reminderAt && !t.reminded ? `<span title="Reminder ${esc(fmtReminder(t.reminderAt))}">${BELL_ICON}</span>` : ''}
         ${t.notes ? `<span>${NOTES_ICON}</span>` : ''}
+        ${subsOf(t).length ? `<span class="card-subs" title="Subtasks">${CHECKLIST_ICON}${subsOf(t).filter(st => st.done).length}/${subsOf(t).length}</span>` : ''}
       </div>
+      ${subsOf(t).length ? `<div class="card-progress"><span style="width:${subsOf(t).filter(st => st.done).length / subsOf(t).length * 100}%"></span></div>` : ''}
     </div>`;
   }
 
@@ -500,7 +681,7 @@
   }
   function closeMenu() { $('#popMenu').hidden = true; }
   const optList = (opts, cur) => opts.map(o =>
-    `<button class="pop-opt ${o.color ? '' : 'none'}" data-val="${o.id}" style="${o.color ? `background:${o.color}` : ''}">${o.id === cur ? '✓ ' : ''}${o.label}</button>`).join('');
+    `<button class="pop-opt ${o.color ? '' : 'none'}" data-val="${o.id}" style="${o.color ? `background:${o.color}` : ''}">${o.id === cur ? '✓ ' : ''}${labelHtml(o)}</button>`).join('');
 
   /* ── Event wiring ── */
   document.addEventListener('click', e => {
@@ -534,7 +715,15 @@
   }
 
   $$('.tab').forEach(tb => tb.addEventListener('click', () => {
-    prefs.mode = tb.dataset.mode; savePrefs(); renderHeader(); renderBody();
+    const mode = tb.dataset.mode, v = prefs.view;
+    if (v.kind === 'project') {
+      const p = projectOf(v.id);
+      if (p && (p.layout || 'table') !== mode) {
+        p.layout = mode;   // local copy, so the switch is instant
+        projCol().doc(p.id).update({ layout: mode }).catch(fail);
+      }
+    } else { prefs.mode = mode; savePrefs(); }
+    renderHeader(); renderBody();
   }));
   $('#newTaskBtn').addEventListener('click', () => openDrawer(null));
   $('#addProjectBtn').addEventListener('click', () => openProjectModal(null));
@@ -549,6 +738,16 @@
     const action = actEl.dataset.action;
     if (action === 'new-project') return openProjectModal(null);
     if (action === 'new-task') return openDrawer(null);
+    if (action === 'cal-prev') return shiftMonth(-1);
+    if (action === 'cal-next') return shiftMonth(1);
+    if (action === 'cal-today') { calSelected = todayStr(); calMonth = calSelected.slice(0, 7); return renderBody(); }
+    if (action === 'cal-day') {
+      calSelected = actEl.dataset.date;
+      if (calSelected.slice(0, 7) !== calMonth) calMonth = calSelected.slice(0, 7);
+      renderBody();
+      if (window.innerWidth <= 860) $('.day-panel', body)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
     if (action === 'toggle-group') {
       const g = actEl.closest('.group'), key = g.dataset.group;
       const now = !g.classList.contains('collapsed');
@@ -559,7 +758,16 @@
     const row = actEl.closest('[data-id]');
     const t = row && tasks.find(x => x.id === row.dataset.id);
     if (!t) return;
+    const subId = actEl.closest('[data-sub]')?.dataset.sub;
     switch (action) {
+      case 'toggle-subs':
+        e.stopPropagation();
+        prefs.subsCollapsed[t.id] = !prefs.subsCollapsed[t.id];
+        if (!prefs.subsCollapsed[t.id]) delete prefs.subsCollapsed[t.id];
+        savePrefs(); renderBody(); return;
+      case 'sub-toggle': toggleSubtask(t, subId); return;
+      case 'sub-delete': removeSubtask(t, subId); return;
+      case 'sub-edit': startSubRename(actEl, t, subId); return;
       case 'toggle-done': toggleDone(t); break;
       case 'open': openDrawer(t.id); break;
       case 'status':
@@ -574,17 +782,49 @@
       case 'more':
         openMenu(actEl, `
           <button class="pop-item" data-val="edit">Edit task</button>
+          <button class="pop-item" data-val="add-sub">Add subtask</button>
           <button class="pop-item" data-val="dup">Duplicate</button>
           ${t.due ? '<button class="pop-item" data-val="clear-due">Clear due date</button>' : ''}
           <button class="pop-item danger" data-val="delete">Delete</button>`, val => {
           if (val === 'edit') openDrawer(t.id);
-          if (val === 'dup') { const { id, ...d } = t; createTask({ ...d, title: d.title + ' (copy)', status: 'todo', completedAt: null, reminded: false, createdAt: Date.now() }); }
+          if (val === 'add-sub') {
+            if (subsOf(t).length) delete prefs.subsCollapsed[t.id], savePrefs();
+            else addingSubFor = t.id;
+            renderBody();
+            $(`[data-add-sub="${t.id}"]`, body)?.focus();
+          }
+          if (val === 'dup') { const { id, ...d } = t; createTask({ ...d, title: d.title + ' (copy)', status: 'todo', completedAt: null, reminded: false, createdAt: Date.now(), subtasks: subsOf(t).map(st => ({ ...st, id: newSubId(), done: false })) }); }
           if (val === 'clear-due') setDue(t, '');
           if (val === 'delete') deleteTask(t.id);
         });
         break;
     }
   });
+  function startSubRename(span, t, subId) {
+    const inp = document.createElement('input');
+    inp.className = 's-edit'; inp.value = span.textContent; inp.maxLength = 200;
+    span.replaceWith(inp);
+    inp.focus(); inp.select();
+    let done = false;
+    const finish = save => {
+      if (done) return; done = true;
+      const v = inp.value.trim();
+      if (save && v !== span.textContent) renameSubtask(t, subId, v);
+      else inp.replaceWith(span);
+    };
+    inp.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+      if (e.key === 'Escape') { e.stopPropagation(); finish(false); }
+    });
+    inp.addEventListener('blur', () => finish(true));
+  }
+  body.addEventListener('focusout', e => {
+    if (e.target.matches('[data-add-sub]') && !e.target.value.trim() && addingSubFor === e.target.dataset.addSub) {
+      addingSubFor = null;
+      setTimeout(renderBody, 0);
+    }
+  });
+
   body.addEventListener('change', e => {
     if (!e.target.classList.contains('due-input')) return;
     const t = tasks.find(x => x.id === e.target.closest('[data-id]').dataset.id);
@@ -592,6 +832,23 @@
   });
   body.addEventListener('keydown', e => {
     const inp = e.target;
+    if (e.key === 'Enter' && inp.matches('[data-add-date]')) {
+      const title = inp.value.trim(); if (!title) return;
+      const v = prefs.view;
+      createTask({ title, due: inp.dataset.addDate, projectId: v.kind === 'project' ? v.id : null });
+      inp.value = '';
+      return;
+    }
+    if (e.key === 'Enter' && inp.matches('[data-add-sub]')) {
+      const t = tasks.find(x => x.id === inp.dataset.addSub), title = inp.value.trim();
+      if (!t || !title) return;
+      addingSubFor = null;
+      delete prefs.subsCollapsed[t.id];
+      inp.value = '';
+      addSubtask(t, title);
+      renderBody();
+      return;
+    }
     if (e.key !== 'Enter' || !(inp.matches('[data-add-project]') || inp.matches('[data-add-status]'))) return;
     const title = inp.value.trim();
     if (!title) return;
@@ -607,9 +864,6 @@
     if (v.kind === 'smart' && v.id === 'upcoming') data.due = addDays(todayStr(), 1);
     createTask(data);
     inp.value = '';
-    // Re-focus the same add input after the snapshot re-renders
-    const sel = inp.matches('[data-add-project]') ? `[data-add-project="${inp.dataset.addProject}"]` : `[data-add-status="${inp.dataset.addStatus}"]`;
-    requestAnimationFrame(() => setTimeout(() => $(sel, body)?.focus(), 30));
   });
 
   /* Kanban drag & drop */
@@ -648,9 +902,10 @@
     draft = t ? { ...t } : {
       title: '', notes: '', status: 'todo', priority: '',
       projectId: v.kind === 'project' ? v.id : null,
-      due: v.kind === 'smart' && v.id === 'today' ? todayStr() : '', dueTime: '',
-      reminderMode: 'none', reminderAt: null
+      due: currentMode() === 'calendar' ? calSelected : v.kind === 'smart' && v.id === 'today' ? todayStr() : '', dueTime: '',
+      reminderMode: 'none', reminderAt: null, subtasks: []
     };
+    draft.subtasks = subsOf(draft).map(st => ({ ...st }));
     $('#fTitle').value = draft.title;
     $('#fNotes').value = draft.notes || '';
     $('#fProject').innerHTML = `<option value="">No project</option>` +
@@ -661,6 +916,7 @@
     $('#fReminder').value = draft.reminderMode || 'none';
     $('#fReminderAt').value = draft.reminderAt ? toLocalInput(draft.reminderAt) : '';
     renderPickers();
+    renderDrawerSubs();
     syncReminderUI();
     $('#deleteTaskBtn').hidden = !t;
     $('#taskMeta').textContent = t
@@ -679,10 +935,58 @@
   }
   function renderPickers() {
     $('#fStatus').innerHTML = STATUSES.map(s =>
-      `<button type="button" class="pick ${draft.status === s.id ? 'sel' : ''}" data-status="${s.id}" style="background:${s.color}">${s.label}</button>`).join('');
+      `<button type="button" class="pick ${draft.status === s.id ? 'sel' : ''}" data-status="${s.id}" style="background:${s.color}">${labelHtml(s)}</button>`).join('');
     $('#fPriority').innerHTML = PRIORITIES.map(p =>
       `<button type="button" class="pick ${p.color ? '' : 'none'} ${(draft.priority || '') === p.id ? 'sel' : ''}" data-priority="${p.id}" style="${p.color ? `background:${p.color}` : ''}">${p.label}</button>`).join('');
   }
+  /* Drawer checklist. Changes to an existing task save immediately, like checking a box should;
+     a new task keeps them in the draft until Save. */
+  function renderDrawerSubs() {
+    const subs = draft.subtasks, done = subs.filter(st => st.done).length;
+    $('#subProgress').hidden = !subs.length;
+    $('#subCount').textContent = subs.length ? `${done}/${subs.length}` : '';
+    $('#subProgress span').style.width = subs.length ? `${done / subs.length * 100}%` : '0';
+    $('#subList').innerHTML = subs.map(st => `
+      <li class="sub-item ${st.done ? 'done' : ''}" data-sub="${esc(st.id)}">
+        <input type="checkbox" ${st.done ? 'checked' : ''} aria-label="Mark subtask complete">
+        <input class="sub-title" value="${esc(st.title)}" maxlength="200" aria-label="Subtask">
+        <button type="button" class="icon-btn sm" data-sub-del aria-label="Delete subtask">${X_ICON}</button>
+      </li>`).join('');
+  }
+  function commitDrawerSubs() {
+    renderDrawerSubs();
+    const t = editingTaskId && tasks.find(x => x.id === editingTaskId);
+    if (t) saveSubtasks(t, draft.subtasks.map(st => ({ ...st })));
+  }
+  $('#subList').addEventListener('change', e => {
+    const li = e.target.closest('[data-sub]'); if (!li) return;
+    const st = draft.subtasks.find(x => x.id === li.dataset.sub);
+    if (e.target.type === 'checkbox') st.done = e.target.checked;
+    else {
+      const v = e.target.value.trim();
+      if (!v) draft.subtasks = draft.subtasks.filter(x => x !== st);
+      else st.title = v;
+    }
+    commitDrawerSubs();
+  });
+  $('#subList').addEventListener('click', e => {
+    const del = e.target.closest('[data-sub-del]'); if (!del) return;
+    const id = del.closest('[data-sub]').dataset.sub;
+    draft.subtasks = draft.subtasks.filter(x => x.id !== id);
+    commitDrawerSubs();
+  });
+  $('#subList').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && e.target.classList.contains('sub-title')) { e.preventDefault(); e.target.blur(); }
+  });
+  $('#subAdd').addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const title = e.target.value.trim(); if (!title) return;
+    draft.subtasks.push({ id: newSubId(), title, done: false });
+    e.target.value = '';
+    commitDrawerSubs();
+  });
+
   function syncReminderUI() {
     const mode = $('#fReminder').value;
     const due = $('#fDue').value, time = $('#fDueTime').value;
@@ -743,7 +1047,8 @@
       priority: draft.priority || '',
       due, dueTime,
       reminderMode: reminderAt ? mode : 'none',
-      reminderAt
+      reminderAt,
+      subtasks: draft.subtasks
     };
     const prev = editingTaskId ? tasks.find(x => x.id === editingTaskId) : null;
     if (!prev || prev.reminderAt !== reminderAt) data.reminded = false;
