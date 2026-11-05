@@ -291,7 +291,9 @@
   }
 
   /* ── View selection ── */
-  function viewTasks() {
+  /* "Hide completed" applies everywhere except the Completed view itself */
+  const hidingDone = () => !!prefs.hideDone && !(prefs.view.kind === 'smart' && prefs.view.id === 'completed');
+  function viewTasks(opts = {}) {
     const v = prefs.view, today = todayStr();
     let list = tasks;
     if (v.kind === 'project') list = list.filter(t => t.projectId === v.id);
@@ -304,6 +306,7 @@
       list = list.filter(t => t.title.toLowerCase().includes(q) || (t.notes || '').toLowerCase().includes(q) ||
         subsOf(t).some(st => st.title.toLowerCase().includes(q)));
     }
+    if (hidingDone() && !opts.withDone) list = list.filter(t => !isDone(t));
     return list;
   }
   function sortOpen(a, b) {
@@ -321,10 +324,11 @@
     const v = prefs.view;
     if (v.kind === 'project') {
       const p = projectOf(v.id);
-      return [
+      const groups = [
         { key: `p:${p.id}:open`, name: 'To do', color: p.color, projectId: p.id, tasks: list.filter(t => !isDone(t)).sort(sortManual), canAdd: true, reorder: !search },
         { key: `p:${p.id}:done`, name: 'Completed', color: '#00c875', projectId: p.id, tasks: list.filter(isDone).sort(sortDone), canAdd: false, defaultCollapsed: true }
       ];
+      return hidingDone() ? groups.slice(0, 1) : groups;
     }
     const showEmpty = v.id === 'all' && !search;
     const groups = [...projects, NO_PROJECT].map(p => ({
@@ -390,8 +394,15 @@
     $('#titleDot').style.background = p ? p.color : 'transparent';
     $('#titleDot').hidden = !p;
     $('#editProjectBtn').hidden = !p;
-    const list = viewTasks();
+    const list = viewTasks({ withDone: true });
     const open = list.filter(t => !isDone(t)).length;
+    const scope = currentMode() === 'calendar' ? calendarTasks({ withDone: true }) : list;
+    const doneCount = scope.filter(isDone).length;
+    const tgl = $('#hideDoneBtn');
+    tgl.hidden = v.kind === 'smart' && v.id === 'completed';
+    tgl.setAttribute('aria-checked', String(!!prefs.hideDone));
+    $('#hideDoneCount').textContent = prefs.hideDone && doneCount ? doneCount : '';
+    tgl.title = prefs.hideDone ? `${doneCount} completed task${doneCount === 1 ? '' : 's'} hidden` : 'Hide completed tasks';
     const subs = {
       today: 'Tasks due today, plus anything overdue',
       upcoming: 'Everything scheduled after today',
@@ -441,6 +452,10 @@
         <p>Start by creating a project, then add tasks with due dates and reminders.</p>
         <button class="btn btn-primary" data-action="new-project">Create your first project</button>
       </div>`;
+    const hiddenDone = hidingDone() ? viewTasks({ withDone: true }).filter(isDone).length : 0;
+    if (hiddenDone) return `<div class="empty-state"><h3>All done here</h3>
+      <p>${hiddenDone} completed task${hiddenDone === 1 ? ' is' : 's are'} hidden.</p>
+      <button class="btn btn-ghost" data-action="show-done">Show completed</button></div>`;
     const msg = {
       today: ['You\'re all caught up', 'Nothing due today. Enjoy it.'],
       upcoming: ['Nothing scheduled', 'Tasks with future due dates show up here.'],
@@ -553,7 +568,7 @@
       return `
       <div class="column" data-status="${s.id}">
         <div class="column-head" style="background:${s.color}"><span>${labelHtml(s)}</span><span>${col.length}</span></div>
-        <div class="column-body">${col.map(renderCard).join('')}</div>
+        <div class="column-body">${col.map(renderCard).join('')}${s.id === 'done' && hidingDone() ? `<div class="col-hidden">Completed tasks hidden<br><button class="link-btn" data-action="show-done">Show them</button></div>` : ''}</div>
         ${v.id !== 'completed' || v.kind === 'project' ? `<div class="column-add"><input data-add-status="${s.id}" placeholder="+ Add task" maxlength="200"></div>` : ''}
       </div>`;
     }).join('')}</div>`;
@@ -562,9 +577,9 @@
   /* ── Calendar ──
      Ignores the Today/Upcoming/Overdue filters so every dated task shows up;
      a project view still narrows it to that project. */
-  function calendarTasks() {
+  function calendarTasks(opts = {}) {
     const v = prefs.view;
-    let list = tasks.filter(t => t.due);
+    let list = tasks.filter(t => t.due && !(hidingDone() && !opts.withDone && isDone(t)));
     if (v.kind === 'project') list = list.filter(t => t.projectId === v.id);
     if (search) {
       const q = search.toLowerCase();
@@ -745,6 +760,11 @@
     renderHeader(); renderBody();
   }));
   $('#newTaskBtn').addEventListener('click', () => openDrawer(null));
+  function setHideDone(on) {
+    prefs.hideDone = on; savePrefs();
+    renderHeader(); renderBody();
+  }
+  $('#hideDoneBtn').addEventListener('click', () => setHideDone(!prefs.hideDone));
   $('#addProjectBtn').addEventListener('click', () => openProjectModal(null));
   $('#editProjectBtn').addEventListener('click', () => openProjectModal(prefs.view.id));
 
@@ -757,6 +777,7 @@
     const action = actEl.dataset.action;
     if (action === 'new-project') return openProjectModal(null);
     if (action === 'new-task') return openDrawer(null);
+    if (action === 'show-done') return setHideDone(false);
     if (action === 'cal-prev') return shiftMonth(-1);
     if (action === 'cal-next') return shiftMonth(1);
     if (action === 'cal-today') { calSelected = todayStr(); calMonth = calSelected.slice(0, 7); return renderBody(); }
