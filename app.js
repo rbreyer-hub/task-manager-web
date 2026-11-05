@@ -8,7 +8,7 @@
 
   /* ── Constants ── */
   const STATUSES = [
-    { id: 'todo',    label: 'Not started',   color: '#c4c4c4' },
+    { id: 'todo',    label: 'Not started',   color: '#797e93' },
     { id: 'working', label: 'Working on it', color: '#fdab3d' },
     { id: 'stuck',   label: 'Stuck',         color: '#e2445c' },
     { id: 'done',    label: 'Done',          color: '#00c875' }
@@ -1151,6 +1151,26 @@
     });
   }
   $('#notifBtn').addEventListener('click', requestNotif);
+
+  /* ── Theme: system → light → dark ── */
+  const THEME_KEY = 'taskBoard.theme';
+  const THEME_TITLES = { system: 'Theme: match system', light: 'Theme: light', dark: 'Theme: dark' };
+  function applyTheme(mode) {
+    if (mode === 'system') delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = mode;
+    const btn = $('#themeBtn');
+    btn.dataset.mode = mode;
+    btn.title = THEME_TITLES[mode];
+  }
+  let theme = 'system';
+  try { theme = localStorage.getItem(THEME_KEY) || 'system'; } catch (_) {}
+  applyTheme(theme);
+  $('#themeBtn').addEventListener('click', () => {
+    theme = { system: 'light', light: 'dark', dark: 'system' }[theme] || 'system';
+    try { localStorage.setItem(THEME_KEY, theme); } catch (_) {}
+    applyTheme(theme);
+    toast(THEME_TITLES[theme]);
+  });
 
   function checkReminders() {
     if (!user) return;
