@@ -10,6 +10,7 @@ Vanilla JS, no build step. Data syncs through Firebase (Google sign-in + Firesto
 - **Subtasks:** checklist items under each task. Check off, rename (click the text) or remove them right in the table, or in the task panel.
 - **Editing:** click a task to open the side panel; edit or delete projects with the pencil next to the project title
 - **Reminders:** browser notifications (click the bell in the top bar to allow them) plus an in-app toast. They fire while the app is open in any tab; reminders missed while it was closed fire the next time you open it.
+- **Hide completed:** toolbar switch hides finished tasks in Table, Kanban and Calendar (remembered per browser; the Completed view ignores it).
 - **Reorder:** drag the ⋮⋮ handle on a table row (mouse or touch), or focus it and use the arrow keys. Works in project views and All tasks; in All tasks, dropping into another project's group moves the task there. Today/Upcoming/Overdue stay sorted by due date.
 - **Shortcut:** press `N` for a new task
 
