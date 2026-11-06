@@ -12,7 +12,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="styles.css?v=20261105a">
+<link rel="stylesheet" href="styles.css?v=20261106a">
 </head>
 <body>
 
@@ -134,6 +134,9 @@
         <label>Project</label>
         <select id="fProject"></select>
 
+        <label id="fCategoryRow" for="fCategory">Category</label>
+        <select id="fCategory"></select>
+
         <label>Status</label>
         <div class="pill-picker" id="fStatus"></div>
 
@@ -191,6 +194,9 @@
     <input id="pName" required maxlength="80" placeholder="e.g. Kitchen remodel">
     <label class="block-label">Color</label>
     <div class="swatches" id="pColors"></div>
+    <label class="block-label">Categories <small class="hint">optional · group tasks inside this project</small></label>
+    <ul class="sub-list cat-list" id="pCats"></ul>
+    <input id="pCatAdd" class="sub-add" placeholder="+ Add category, press Enter" maxlength="60">
     <div class="modal-foot">
       <button type="button" class="btn btn-danger-ghost" id="deleteProjectBtn" hidden>Delete project</button>
       <span class="spacer"></span>
@@ -209,6 +215,6 @@
 <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore-compat.js"></script>
 <script src="firebase-config.js"></script>
-<script src="app.js?v=20261105a"></script>
+<script src="app.js?v=20261106a"></script>
 </body>
 </html>

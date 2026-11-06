@@ -691,3 +691,29 @@ textarea { height: auto; padding: 10px; resize: vertical; line-height: 1.5; }
   .topbar-right { gap: 2px; }
   .tab { padding: 0 8px; }
 }
+
+/* ── Categories ── */
+.field-grid [hidden] { display: none; }
+.group-more { opacity: .55; }
+.group-head:hover .group-more, .group-more:focus-visible { opacity: 1; }
+.group-name-edit {
+  font-size: 17px; font-weight: 600; height: 30px; padding: 0 8px; min-width: 200px; outline: 0;
+  border: 1px solid var(--primary); border-radius: var(--radius-sm); background: var(--surface);
+}
+.add-category { margin: -8px 0 32px; }
+.add-category input {
+  width: min(320px, 100%); height: 36px; padding: 0 12px; outline: 0; font-weight: 600;
+  border: 1px dashed var(--border-2); border-radius: var(--radius-sm); background: transparent; color: var(--text);
+}
+.add-category input:focus { border-style: solid; border-color: var(--primary); background: var(--surface); }
+.t-cat {
+  flex-shrink: 0; display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12px; color: var(--muted); padding: 1px 8px; border-radius: 10px;
+  background: var(--surface-2); border: 1px solid var(--border);
+}
+.t-cat::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--cc); }
+.pop-swatches { display: grid; grid-template-columns: repeat(6, 22px); gap: 6px; padding: 4px 10px 6px; }
+.swatch.sm { width: 22px; height: 22px; border-radius: 5px; }
+.cat-item .icon-btn { opacity: 1; }
+.cat-dot { width: 18px; height: 18px; flex-shrink: 0; border: 0; border-radius: 50%; cursor: pointer; }
+.modal .cat-list { margin-bottom: 2px; }

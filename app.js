@@ -81,6 +81,9 @@
   const labelHtml = o => (o.alert ? ALERT_ICON : '') + o.label;
   const subsOf = t => Array.isArray(t.subtasks) ? t.subtasks : [];
   const newSubId = () => Math.random().toString(36).slice(2, 10);
+  const catsOf = p => Array.isArray(p?.categories) ? p.categories : [];
+  const categoryOf = t => catsOf(projectOf(t.projectId)).find(c => c.id === t.categoryId) || null;
+  const UNCAT_COLOR = '#9aadbd';
 
   let calSelected = todayStr();            // day whose tasks list beside the grid
   let calMonth = calSelected.slice(0, 7);  // 'YYYY-MM' shown in the calendar
@@ -164,7 +167,7 @@
   function createTask(data) {
     const now = Date.now();
     return taskCol().add(Object.assign({
-      title: '', notes: '', projectId: null, status: 'todo', priority: '',
+      title: '', notes: '', projectId: null, categoryId: '', status: 'todo', priority: '',
       due: '', dueTime: '', reminderMode: 'none', reminderAt: null, reminded: false,
       completedAt: null, createdAt: now, updatedAt: now, order: now
     }, data)).catch(fail);
@@ -210,6 +213,29 @@
   }
   function removeSubtask(t, subId) {
     saveSubtasks(t, subsOf(t).filter(st => st.id !== subId));
+  }
+
+  /* Categories live on the project doc as [{ id, name, color }] in display order;
+     a task points at one with `categoryId`. Removing a category un-files its tasks. */
+  function nextCatColor(p, cats = catsOf(p)) {
+    const used = [p.color, ...cats.map(c => c.color)];
+    return PROJECT_COLORS.find(c => !used.includes(c)) || PROJECT_COLORS[cats.length % PROJECT_COLORS.length];
+  }
+  function saveCategories(p, cats, extra = {}) {
+    const gone = catsOf(p).filter(c => !cats.some(n => n.id === c.id)).map(c => c.id);
+    p.categories = cats;   // local copy, so the groups redraw right away
+    const now = Date.now(), batch = db.batch();
+    batch.update(projCol().doc(p.id), Object.assign({ categories: cats, updatedAt: now }, extra));
+    tasks.filter(t => t.projectId === p.id && t.categoryId && gone.includes(t.categoryId)).forEach(t => {
+      t.categoryId = '';
+      batch.update(taskCol().doc(t.id), { categoryId: '', updatedAt: now });
+    });
+    return batch.commit().catch(fail);
+  }
+  function addCategory(p, name) {
+    const c = { id: newSubId(), name, color: nextCatColor(p) };
+    saveCategories(p, [...catsOf(p), c]);
+    return c;
   }
 
   /* Keep reminder in sync when the due date changes inline */
@@ -323,12 +349,21 @@
   function buildGroups(list) {
     const v = prefs.view;
     if (v.kind === 'project') {
-      const p = projectOf(v.id);
-      const groups = [
-        { key: `p:${p.id}:open`, name: 'To do', color: p.color, projectId: p.id, tasks: list.filter(t => !isDone(t)).sort(sortManual), canAdd: true, reorder: !search },
-        { key: `p:${p.id}:done`, name: 'Completed', color: '#00c875', projectId: p.id, tasks: list.filter(isDone).sort(sortDone), canAdd: false, defaultCollapsed: true }
-      ];
-      return hidingDone() ? groups.slice(0, 1) : groups;
+      const p = projectOf(v.id), cats = catsOf(p);
+      const open = list.filter(t => !isDone(t)).sort(sortManual);
+      const filed = t => cats.some(c => c.id === t.categoryId);
+      const loose = open.filter(t => !filed(t));
+      const groups = [];
+      // Without categories the project is one "To do" list; with them, unfiled tasks sit on top
+      if (!cats.length || loose.length) groups.push({ key: `p:${p.id}:open`, name: cats.length ? 'Uncategorized' : 'To do', color: cats.length ? UNCAT_COLOR : p.color,
+        projectId: p.id, categoryId: '', tasks: loose, canAdd: true, reorder: !search });
+      cats.forEach(c => {
+        const ct = open.filter(t => t.categoryId === c.id);
+        if (search && !ct.length) return;
+        groups.push({ key: `p:${p.id}:c:${c.id}`, name: c.name, color: c.color, projectId: p.id, categoryId: c.id, category: true, tasks: ct, canAdd: true, reorder: !search });
+      });
+      if (!hidingDone()) groups.push({ key: `p:${p.id}:done`, name: 'Completed', color: '#00c875', projectId: p.id, tasks: list.filter(isDone).sort(sortDone), canAdd: false, defaultCollapsed: true, done: true });
+      return groups;
     }
     const showEmpty = v.id === 'all' && !search;
     const groups = [...projects, NO_PROJECT].map(p => ({
@@ -418,13 +453,13 @@
 
   /* Snapshots re-render the body while someone may be typing in an add box;
      put the caret back where it was so rapid entry keeps working. */
-  const ADD_ATTRS = ['data-add-sub', 'data-add-project', 'data-add-status', 'data-add-date'];
+  const ADD_ATTRS = ['data-add-sub', 'data-add-project', 'data-add-status', 'data-add-date', 'data-add-category'];
   function renderBody() {
     if (rowDrag) { rowDrag.pendingRender = true; return; }
     const body = $('#mainBody');
     const a = document.activeElement;
     const attr = a && body.contains(a) && ADD_ATTRS.find(n => a.hasAttribute(n));
-    const keep = attr && { sel: `[${attr}="${CSS.escape(a.getAttribute(attr))}"]`, value: a.value, pos: a.selectionStart };
+    const keep = attr && { sel: `[${attr}="${CSS.escape(a.getAttribute(attr))}"]` + (a.hasAttribute('data-add-cat') ? `[data-add-cat="${CSS.escape(a.dataset.addCat)}"]` : ''), value: a.value, pos: a.selectionStart };
     const handleOf = a && body.contains(a) && a.matches('[data-drag]') && a.closest('.trow.task')?.dataset.id;
     renderBodyInner(body);
     if (handleOf) $(`.trow.task[data-id="${handleOf}"] [data-drag]`, body)?.focus();
@@ -440,7 +475,15 @@
 
     const groups = buildGroups(list);
     if (!groups.length) { body.innerHTML = renderEmpty(); return; }
-    body.innerHTML = groups.map(renderGroup).join('');
+    const html = groups.map(renderGroup);
+    if (prefs.view.kind === 'project' && !search) {
+      const at = groups.findIndex(g => g.done);
+      html.splice(at < 0 ? html.length : at, 0, `
+      <div class="add-category">
+        <input data-add-category="${prefs.view.id}" placeholder="+ Add category" maxlength="60" aria-label="New category name">
+      </div>`);
+    }
+    body.innerHTML = html.join('');
   }
 
   function renderEmpty() {
@@ -475,11 +518,12 @@
       return n ? `<span style="width:${(n / total) * 100}%;background:${s.color}" title="${s.label}: ${n}"></span>` : '';
     }).join('') : '';
     return `
-    <section class="group ${collapsed ? 'collapsed' : ''} ${g.reorder ? 'reorderable' : ''}" data-group="${esc(g.key)}" data-group-project="${g.projectId ?? ''}" style="--gc:${esc(g.color)}">
+    <section class="group ${collapsed ? 'collapsed' : ''} ${g.reorder ? 'reorderable' : ''}" data-group="${esc(g.key)}" data-group-project="${g.projectId ?? ''}"${g.categoryId !== undefined ? ` data-group-category="${esc(g.categoryId)}"` : ''} style="--gc:${esc(g.color)}">
       <div class="group-head">
         <button class="group-toggle" data-action="toggle-group" style="color:${esc(g.color)}" aria-label="Collapse group">${CARET_ICON}</button>
         <button class="group-name ${g.link ? 'link' : ''}" ${g.link ? `data-project="${g.projectId}"` : ''} style="color:${esc(g.color)}">${esc(g.name)}</button>
         <span class="group-count">${total} ${total === 1 ? 'task' : 'tasks'}</span>
+        ${g.category ? `<button class="icon-btn sm group-more" data-action="cat-menu" data-cat="${esc(g.categoryId)}" aria-label="Category options">${DOTS_ICON}</button>` : ''}
       </div>
       <div class="table-scroll"><div class="table">
         <div class="trow thead">
@@ -493,7 +537,7 @@
         <div class="trow add-row">
           <div class="bar" style="background:${esc(g.color)};opacity:.5"></div>
           <div class="c-check"></div>
-          <div class="c-title"><input data-add-project="${g.projectId ?? ''}" placeholder="+ Add task" maxlength="200"></div>
+          <div class="c-title"><input data-add-project="${g.projectId ?? ''}"${g.categoryId !== undefined ? ` data-add-cat="${esc(g.categoryId)}"` : ''} placeholder="+ Add task" maxlength="200"></div>
           <div></div><div></div><div></div><div></div><div></div>
         </div>` : ''}
         ${total ? `
@@ -515,6 +559,7 @@
     const subs = subsOf(t);
     const subsOpen = subs.length ? !prefs.subsCollapsed[t.id] : addingSubFor === t.id;
     const subsDone = subs.filter(st => st.done).length;
+    const cat = categoryOf(t), showCat = cat && g.categoryId !== cat.id;
     return `
     <div class="trow task ${isDone(t) ? 'done' : ''} ${subsOpen ? 'subs-open' : ''}" data-id="${t.id}">
       <div class="bar" style="background:${esc(g.color)}"></div>
@@ -530,6 +575,7 @@
         ${subs.length ? `<button class="t-subs ${subsDone === subs.length ? 'all' : ''}" data-action="toggle-subs" title="Subtasks">${CHECKLIST_ICON}${subsDone}/${subs.length}</button>` : ''}
         ${t.notes ? `<span class="t-notes" title="Has notes">${NOTES_ICON}</span>` : ''}
         ${showProj ? `<span class="t-proj">${esc(proj.name)}</span>` : ''}
+        ${showCat ? `<span class="t-cat" style="--cc:${esc(cat.color)}">${esc(cat.name)}</span>` : ''}
         <span class="t-open">Open</span>
       </div>
       <div><button class="pill" data-action="status" style="background:${st.color}">${labelHtml(st)}</button></div>
@@ -655,7 +701,7 @@
             <div class="day-body" data-action="open">
               <div class="day-title">${esc(t.title)}</div>
               <div class="day-meta">
-                ${p ? `<span><i class="proj-dot" style="background:${esc(p.color)}"></i>${esc(p.name)}</span>` : ''}
+                ${p ? `<span><i class="proj-dot" style="background:${esc(p.color)}"></i>${esc(p.name)}${categoryOf(t) ? ` · ${esc(categoryOf(t).name)}` : ''}</span>` : ''}
                 ${t.dueTime ? `<span>${fmtTime(t.dueTime)}</span>` : ''}
                 ${subs.length ? `<span>${CHECKLIST_ICON}${subs.filter(x => x.done).length}/${subs.length}</span>` : ''}
                 ${t.reminderAt && !t.reminded ? `<span>${BELL_ICON}</span>` : ''}
@@ -683,6 +729,7 @@
       <div class="card-title">${esc(t.title)}</div>
       <div class="card-meta">
         ${proj && prefs.view.kind !== 'project' ? `<span>${esc(proj.name)}</span>` : ''}
+        ${categoryOf(t) ? `<span class="t-cat" style="--cc:${esc(categoryOf(t).color)}">${esc(categoryOf(t).name)}</span>` : ''}
         ${t.due ? `<span class="due-label ${dueCls}">${esc(fmtDue(t))}</span>` : ''}
         ${pr.id ? `<span class="mini-pill" style="background:${pr.color}">${labelHtml(pr)}</span>` : ''}
         ${t.reminderAt && !t.reminded ? `<span title="Reminder ${esc(fmtReminder(t.reminderAt))}">${BELL_ICON}</span>` : ''}
@@ -719,7 +766,7 @@
 
   /* ── Event wiring ── */
   document.addEventListener('click', e => {
-    if (!$('#popMenu').hidden && !e.target.closest('#popMenu') && !e.target.closest('[data-action="status"],[data-action="priority"],[data-action="more"]')) closeMenu();
+    if (!$('#popMenu').hidden && !e.target.closest('#popMenu') && !e.target.closest('[data-action="status"],[data-action="priority"],[data-action="more"],[data-action="cat-menu"]')) closeMenu();
   });
 
   $('#authSignIn').addEventListener('click', signIn);
@@ -788,6 +835,7 @@
       if (window.innerWidth <= 860) $('.day-panel', body)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       return;
     }
+    if (action === 'cat-menu') return openCategoryMenu(actEl);
     if (action === 'toggle-group') {
       const g = actEl.closest('.group'), key = g.dataset.group;
       const now = !g.classList.contains('collapsed');
@@ -858,6 +906,52 @@
     });
     inp.addEventListener('blur', () => finish(true));
   }
+  /* Category group menu: rename, color, reorder, delete */
+  function openCategoryMenu(btn) {
+    const p = projectOf(prefs.view.id), cats = catsOf(p);
+    const i = cats.findIndex(c => c.id === btn.dataset.cat);
+    if (!p || i < 0) return;
+    const c = cats[i];
+    openMenu(btn, `
+      <button class="pop-item" data-val="rename">Rename</button>
+      <div class="pop-swatches">${PROJECT_COLORS.map(col =>
+        `<button class="swatch sm ${col === c.color ? 'sel' : ''}" data-val="color:${col}" style="background:${col}" aria-label="Color ${col}"></button>`).join('')}</div>
+      ${i > 0 ? '<button class="pop-item" data-val="up">Move up</button>' : ''}
+      ${i < cats.length - 1 ? '<button class="pop-item" data-val="down">Move down</button>' : ''}
+      <button class="pop-item danger" data-val="delete">Delete category</button>`, val => {
+      const next = cats.map(x => ({ ...x }));
+      if (val === 'rename') return startCategoryRename(btn.closest('.group'), p, c);
+      if (val.startsWith('color:')) next[i].color = val.slice(6);
+      if (val === 'up' || val === 'down') { const j = val === 'up' ? i - 1 : i + 1; [next[i], next[j]] = [next[j], next[i]]; }
+      if (val === 'delete') {
+        const n = tasks.filter(t => t.projectId === p.id && t.categoryId === c.id).length;
+        if (n && !confirm(`Delete category "${c.name}"?\n\nIts ${n} task${n === 1 ? '' : 's'} will move to Uncategorized.`)) return;
+        next.splice(i, 1);
+      }
+      saveCategories(p, next);
+      renderBody();
+    });
+  }
+  function startCategoryRename(groupEl, p, c) {
+    const nameEl = $('.group-name', groupEl);
+    const inp = document.createElement('input');
+    inp.className = 'group-name-edit'; inp.value = c.name; inp.maxLength = 60;
+    inp.style.color = c.color;
+    nameEl.replaceWith(inp);
+    inp.focus(); inp.select();
+    let done = false;
+    const finish = save => {
+      if (done) return; done = true;
+      const v = inp.value.trim();
+      if (save && v && v !== c.name) saveCategories(p, catsOf(p).map(x => x.id === c.id ? { ...x, name: v } : x));
+      renderBody();
+    };
+    inp.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+      if (e.key === 'Escape') { e.stopPropagation(); finish(false); }
+    });
+    inp.addEventListener('blur', () => finish(true));
+  }
   body.addEventListener('focusout', e => {
     if (e.target.matches('[data-add-sub]') && !e.target.value.trim() && addingSubFor === e.target.dataset.addSub) {
       addingSubFor = null;
@@ -879,6 +973,15 @@
       inp.value = '';
       return;
     }
+    if (e.key === 'Enter' && inp.matches('[data-add-category]')) {
+      const p = projectOf(inp.dataset.addCategory), name = inp.value.trim();
+      if (!p || !name) return;
+      inp.value = '';
+      const c = addCategory(p, name);
+      renderBody();
+      $(`[data-add-cat="${c.id}"]`, body)?.focus();   // ready to add its first task
+      return;
+    }
     if (e.key === 'Enter' && inp.matches('[data-add-sub]')) {
       const t = tasks.find(x => x.id === inp.dataset.addSub), title = inp.value.trim();
       if (!t || !title) return;
@@ -894,7 +997,10 @@
     if (!title) return;
     const v = prefs.view;
     const data = { title };
-    if (inp.matches('[data-add-project]')) data.projectId = inp.dataset.addProject || null;
+    if (inp.matches('[data-add-project]')) {
+      data.projectId = inp.dataset.addProject || null;
+      if (inp.dataset.addCat) data.categoryId = inp.dataset.addCat;
+    }
     else {
       data.status = inp.dataset.addStatus;
       if (data.status === 'done') data.completedAt = Date.now();
@@ -924,8 +1030,9 @@
     else if (after) order = orderOf(after) - 1024;
     else order = Date.now();
     const patch = { order };
-    const target = groupEl.dataset.groupProject || null;
-    if (prefs.view.kind !== 'project' && (t.projectId || null) !== target) patch.projectId = target;
+    const target = groupEl.dataset.groupProject || null, targetCat = groupEl.dataset.groupCategory;
+    if (prefs.view.kind !== 'project' && (t.projectId || null) !== target) { patch.projectId = target; patch.categoryId = ''; }
+    if (targetCat !== undefined && (t.categoryId || '') !== targetCat) patch.categoryId = targetCat;
 
     const tooClose = before && after && Math.abs(orderOf(after) - orderOf(before)) < 1e-6;
     if (tooClose) {
@@ -935,7 +1042,7 @@
         x.order = (i + 1) * 1024;
         batch.update(taskCol().doc(x.id), x === t ? { ...patch, order: x.order, updatedAt: Date.now() } : { order: x.order });
       });
-      if (patch.projectId !== undefined) t.projectId = patch.projectId;
+      Object.assign(t, patch, { order: t.order });
       batch.commit().catch(fail);
     } else {
       Object.assign(t, patch);   // optimistic, so the row lands without waiting for the snapshot
@@ -944,6 +1051,8 @@
     if (patch.projectId !== undefined) {
       const p = projectOf(patch.projectId);
       toast(`Moved to ${p ? p.name : 'No project'}`);
+    } else if (patch.categoryId !== undefined) {
+      toast(`Moved to ${categoryOf(t)?.name || 'Uncategorized'}`);
     }
   }
 
@@ -1081,7 +1190,7 @@
     const v = prefs.view;
     draft = t ? { ...t } : {
       title: '', notes: '', status: 'todo', priority: '',
-      projectId: v.kind === 'project' ? v.id : null,
+      projectId: v.kind === 'project' ? v.id : null, categoryId: '',
       due: currentMode() === 'calendar' ? calSelected : v.kind === 'smart' && v.id === 'today' ? todayStr() : '', dueTime: '',
       reminderMode: 'none', reminderAt: null, subtasks: []
     };
@@ -1091,6 +1200,7 @@
     $('#fProject').innerHTML = `<option value="">No project</option>` +
       projects.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
     $('#fProject').value = draft.projectId || '';
+    renderCategorySelect(draft.categoryId);
     $('#fDue').value = draft.due || '';
     $('#fDueTime').value = draft.dueTime || '';
     $('#fReminder').value = draft.reminderMode || 'none';
@@ -1113,6 +1223,27 @@
     $('#drawerScrim').classList.remove('open');
     editingTaskId = null; draft = null;
   }
+  /* Category dropdown follows the chosen project */
+  function renderCategorySelect(selected) {
+    const p = projectOf($('#fProject').value), sel = $('#fCategory');
+    $('#fCategoryRow').hidden = sel.hidden = !p;
+    if (!p) { sel.innerHTML = ''; return; }
+    const cats = catsOf(p);
+    sel.innerHTML = `<option value="">${cats.length ? 'Uncategorized' : 'No category'}</option>` +
+      cats.map(c => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('') +
+      `<option value="__new">+ New category…</option>`;
+    sel.value = cats.some(c => c.id === selected) ? selected : '';
+    sel.dataset.prev = sel.value;
+  }
+  $('#fProject').addEventListener('change', () => renderCategorySelect(''));
+  $('#fCategory').addEventListener('change', e => {
+    const sel = e.target;
+    if (sel.value !== '__new') { sel.dataset.prev = sel.value; return; }
+    const p = projectOf($('#fProject').value);
+    const name = (prompt(`New category in "${p.name}"`) || '').trim();
+    if (!name) { sel.value = sel.dataset.prev || ''; return; }
+    renderCategorySelect(addCategory(p, name).id);
+  });
   function renderPickers() {
     $('#fStatus').innerHTML = STATUSES.map(s =>
       `<button type="button" class="pick ${draft.status === s.id ? 'sel' : ''}" data-status="${s.id}" style="background:${s.color}">${labelHtml(s)}</button>`).join('');
@@ -1223,6 +1354,7 @@
       title,
       notes: $('#fNotes').value.trim(),
       projectId: $('#fProject').value || null,
+      categoryId: $('#fProject').value && $('#fCategory').value !== '__new' ? $('#fCategory').value : '',
       status: draft.status,
       priority: draft.priority || '',
       due, dueTime,
@@ -1252,13 +1384,47 @@
 
   /* ── Project modal ── */
   let pickedColor = PROJECT_COLORS[0];
+  let modalCats = [];   // categories being edited; saved with the project
+  function renderModalCats() {
+    $('#pCats').innerHTML = modalCats.map(c => `
+      <li class="sub-item cat-item" data-cat="${esc(c.id)}">
+        <button type="button" class="cat-dot" data-cat-color style="background:${esc(c.color)}" aria-label="Change color" title="Change color"></button>
+        <input class="sub-title" value="${esc(c.name)}" maxlength="60" aria-label="Category name">
+        <button type="button" class="icon-btn sm" data-cat-del aria-label="Delete category">${X_ICON}</button>
+      </li>`).join('');
+  }
+  $('#pCats').addEventListener('click', e => {
+    const li = e.target.closest('[data-cat]'); if (!li) return;
+    const c = modalCats.find(x => x.id === li.dataset.cat);
+    if (e.target.closest('[data-cat-del]')) { modalCats = modalCats.filter(x => x !== c); renderModalCats(); }
+    if (e.target.closest('[data-cat-color]')) {
+      c.color = PROJECT_COLORS[(PROJECT_COLORS.indexOf(c.color) + 1) % PROJECT_COLORS.length];
+      renderModalCats();
+    }
+  });
+  $('#pCats').addEventListener('input', e => {
+    const li = e.target.closest('[data-cat]');
+    if (li) modalCats.find(x => x.id === li.dataset.cat).name = e.target.value;
+  });
+  $('#pCats').addEventListener('keydown', e => { if (e.key === 'Enter') e.preventDefault(); });
+  $('#pCatAdd').addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const name = e.target.value.trim(); if (!name) return;
+    modalCats.push({ id: newSubId(), name, color: nextCatColor({ color: pickedColor }, modalCats) });
+    e.target.value = '';
+    renderModalCats();
+  });
   function openProjectModal(id) {
     const p = id ? projectOf(id) : null;
     editingProjectId = id;
     $('#projectModalTitle').textContent = p ? 'Edit project' : 'New project';
     $('#pName').value = p ? p.name : '';
     pickedColor = p ? p.color : PROJECT_COLORS[projects.length % PROJECT_COLORS.length];
+    modalCats = catsOf(p).map(c => ({ ...c }));
+    $('#pCatAdd').value = '';
     renderSwatches();
+    renderModalCats();
     $('#deleteProjectBtn').hidden = !p;
     $('#projectModal').showModal();
     $('#pName').focus();
@@ -1276,11 +1442,17 @@
     e.preventDefault();
     const name = $('#pName').value.trim();
     if (!name) return;
+    const pending = $('#pCatAdd').value.trim();   // typed but never pressed Enter
+    if (pending) modalCats.push({ id: newSubId(), name: pending, color: nextCatColor({ color: pickedColor }, modalCats) });
+    const categories = modalCats.map(c => ({ ...c, name: c.name.trim() })).filter(c => c.name);
     if (editingProjectId) {
-      projCol().doc(editingProjectId).update({ name, color: pickedColor, updatedAt: Date.now() }).catch(fail);
+      const p = projectOf(editingProjectId);
+      Object.assign(p, { name, color: pickedColor });
+      saveCategories(p, categories, { name, color: pickedColor });
+      render();
     } else {
       const ref = projCol().doc();
-      const data = { name, color: pickedColor, createdAt: Date.now(), updatedAt: Date.now() };
+      const data = { name, color: pickedColor, categories, createdAt: Date.now(), updatedAt: Date.now() };
       ref.set(data).catch(fail);
       // Show it right away; the snapshot listener replaces this with the stored copy
       if (!projectOf(ref.id)) projects.push({ id: ref.id, ...data });
