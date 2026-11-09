@@ -25,6 +25,7 @@
     '#ff158a', '#037f4c', '#784bd1', '#ff642e', '#66ccff', '#7f5347', '#9aadbd'
   ];
   const SMART_VIEWS = [
+    { id: 'dashboard', label: 'Dashboard', icon: '<svg viewBox="0 0 24 24" width="16" height="16"><path d="M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></svg>' },
     { id: 'today',     label: 'Today',     icon: '<svg viewBox="0 0 24 24" width="16" height="16"><rect x="3" y="5" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 10h18M8 3v4M16 3v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>' },
     { id: 'upcoming',  label: 'Upcoming',  icon: '<svg viewBox="0 0 24 24" width="16" height="16"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7v5l3 2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>' },
     { id: 'overdue',   label: 'Overdue',   icon: '<svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 3l10 18H2L12 3z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M12 10v4M12 17.5v.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>' },
@@ -56,8 +57,8 @@
   let prefs = loadPrefs();   // { view, mode, collapsed: {}, subsCollapsed: {} }
 
   function loadPrefs() {
-    const def = { view: { kind: 'smart', id: 'today' }, mode: 'table', collapsed: {}, subsCollapsed: {} };
-    try { return Object.assign(def, JSON.parse(localStorage.getItem(PREFS_KEY)) || {}); }
+    const def = { view: { kind: 'smart', id: 'dashboard' }, mode: 'table', collapsed: {}, subsCollapsed: {} };
+    try { const p = Object.assign(def, JSON.parse(localStorage.getItem(PREFS_KEY)) || {}); p.view = def.view; return p; }   // the app always opens on the dashboard
     catch (_) { return def; }
   }
   function savePrefs() {
@@ -278,7 +279,7 @@
     if (!loaded.projects || !loaded.tasks) return;
     $('#loading').hidden = true;
     $('#app').hidden = false;
-    if (prefs.view.kind === 'project' && !projectOf(prefs.view.id)) prefs.view = { kind: 'smart', id: 'today' };
+    if (prefs.view.kind === 'project' && !projectOf(prefs.view.id)) prefs.view = { kind: 'smart', id: 'dashboard' };
     render();
     checkReminders();
   }
@@ -382,14 +383,16 @@
 
   /* Each project keeps its own layout (saved on the project doc, so it follows you across devices);
      the My Work views share one layout kept in local prefs. */
+  const isDash = v => !!v && v.kind === 'smart' && v.id === 'dashboard';
   function currentMode() {
     const v = prefs.view;
+    if (isDash(v) && !search) return 'dashboard';
     return v.kind === 'project' ? (projectOf(v.id)?.layout || 'table') : prefs.mode;
   }
 
   /* ── Render ── */
   function render() {
-    if (prefs.view.kind === 'project' && !projectOf(prefs.view.id)) prefs.view = { kind: 'smart', id: 'today' };
+    if (prefs.view.kind === 'project' && !projectOf(prefs.view.id)) prefs.view = { kind: 'smart', id: 'dashboard' };
     renderSidebar();
     renderHeader();
     renderBody();
@@ -412,6 +415,12 @@
         <span class="nav-name">${s.label}</span>
         <span class="nav-count ${s.id === 'overdue' && counts.overdue ? 'alert' : ''}">${counts[s.id] || ''}</span>
       </button>`).join('');
+    const chip = (attr, id, label, active, dot) => `<button class="m-chip ${active ? 'active' : ''}" ${attr}="${id}">${dot ? `<span class="proj-dot" style="background:${esc(dot)}"></span>` : ''}${esc(label)}</button>`;
+    $('#mobileNav').innerHTML =
+      chip('data-smart', 'dashboard', 'Home', v.kind === 'smart' && v.id === 'dashboard') +
+      chip('data-smart', 'all', 'All tasks', v.kind === 'smart' && v.id === 'all') +
+      projects.map(p => chip('data-project', p.id, p.name, v.kind === 'project' && v.id === p.id, p.color)).join('');
+    $('#mobileNav .m-chip.active')?.scrollIntoView({ inline: 'center', block: 'nearest' });
     $('#projectNav').innerHTML = projects.length ? projects.map(p => `
       <button class="nav-item ${v.kind === 'project' && v.id === p.id ? 'active' : ''}" data-project="${p.id}">
         <span class="proj-dot" style="background:${esc(p.color)}"></span>
@@ -434,11 +443,15 @@
     const scope = currentMode() === 'calendar' ? calendarTasks({ withDone: true }) : list;
     const doneCount = scope.filter(isDone).length;
     const tgl = $('#hideDoneBtn');
-    tgl.hidden = v.kind === 'smart' && v.id === 'completed';
+    const dash = currentMode() === 'dashboard';
+    $('.tabs').hidden = dash;
+    $('.toolbar').classList.toggle('dash', dash);
+    tgl.hidden = dash || (v.kind === 'smart' && v.id === 'completed');
     tgl.setAttribute('aria-checked', String(!!prefs.hideDone));
     $('#hideDoneCount').textContent = prefs.hideDone && doneCount ? doneCount : '';
     tgl.title = prefs.hideDone ? `${doneCount} completed task${doneCount === 1 ? '' : 's'} hidden` : 'Hide completed tasks';
     const subs = {
+      dashboard: new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }),
       today: 'Tasks due today, plus anything overdue',
       upcoming: 'Everything scheduled after today',
       overdue: 'Past their due date and not done yet',
@@ -469,6 +482,7 @@
     }
   }
   function renderBodyInner(body) {
+    if (currentMode() === 'dashboard') { body.innerHTML = renderDashboard(); return; }
     const list = viewTasks();
     if (currentMode() === 'board') { body.innerHTML = renderBoard(list); return; }
     if (currentMode() === 'calendar') { body.innerHTML = renderCalendar(); return; }
@@ -484,6 +498,57 @@
       </div>`);
     }
     body.innerHTML = html.join('');
+  }
+
+
+  /* ── Dashboard (home) ── */
+  function renderDashboard() {
+    if (!tasks.length && !projects.length) return renderEmpty();
+    const today = todayStr(), weekEnd = addDays(today, 7);
+    const open = tasks.filter(t => !isDone(t));
+    const overdue = open.filter(isOverdue);
+    const dueToday = open.filter(t => t.due === today);
+    const soon = open.filter(t => t.due && t.due > today && t.due <= weekEnd).sort(sortOpen);
+    const doneWeek = tasks.filter(t => isDone(t) && (t.completedAt || 0) >= Date.now() - 7 * 864e5).length;
+    const attention = [...new Set([...overdue, ...dueToday])].sort(sortOpen);
+    const card = (n, label, view, cls = '') => `
+      <button class="metric ${cls}" data-action="goto" data-kind="smart" data-id="${view}">
+        <span class="metric-n">${n}</span><span class="metric-l">${label}</span>
+      </button>`;
+    const g = { color: '#579bfc', projectId: undefined, reorder: false };
+    const table = (list, color) => `
+      <div class="table-scroll"><div class="table">
+        <div class="trow thead">
+          <div class="bar" style="background:${color}"></div><div class="c-check"></div><div class="c-title">Task</div>
+          <div>Status</div><div>Priority</div><div>Due date</div><div>Reminder</div><div></div>
+        </div>
+        ${list.map(t => renderRow(t, { ...g, color })).join('')}
+      </div></div>`;
+    const section = (title, list, color, empty, more) => `
+      <section class="group dash-section" style="--gc:${color}">
+        <div class="group-head"><span class="group-name" style="color:${color}">${title}</span><span class="group-count">${list.length}</span></div>
+        ${list.length ? table(list.slice(0, more || 50), color) : `<p class="dash-empty">${empty}</p>`}
+      </section>`;
+    const projRows = projects.map(p => {
+      const pt = tasks.filter(t => t.projectId === p.id), done = pt.filter(isDone).length;
+      return `<button class="dash-proj" data-action="goto" data-kind="project" data-id="${p.id}">
+        <span class="proj-dot" style="background:${esc(p.color)}"></span>
+        <span class="dash-proj-name">${esc(p.name)}</span>
+        <span class="dash-proj-bar"><span style="width:${pt.length ? done / pt.length * 100 : 0}%;background:${esc(p.color)}"></span></span>
+        <span class="dash-proj-n">${done}/${pt.length}</span>
+      </button>`;
+    }).join('');
+    return `
+    <div class="metrics">
+      ${card(dueToday.length, 'Due today', 'today')}
+      ${card(overdue.length, 'Overdue', 'overdue', overdue.length ? 'alert' : '')}
+      ${card(soon.length, 'Next 7 days', 'upcoming')}
+      ${card(open.length, 'Open tasks', 'all')}
+      ${card(doneWeek, 'Done this week', 'completed')}
+    </div>
+    ${section('Needs attention', attention, '#e2445c', 'Nothing due today or overdue. 🎉')}
+    ${section('Coming up', soon, '#579bfc', 'Nothing due in the next 7 days.', 8)}
+    ${projects.length ? `<section class="group dash-section"><div class="group-head"><span class="group-name">Projects</span><span class="group-count">${projects.length}</span></div><div class="dash-projects">${projRows}</div></section>` : ''}`;
   }
 
   function renderEmpty() {
@@ -783,12 +848,22 @@
     if (s) setView({ kind: 'smart', id: s.dataset.smart });
     else if (p) setView({ kind: 'project', id: p.dataset.project });
   });
+  $('#mobileNav').addEventListener('click', e => {
+    const sm = e.target.closest('[data-smart]'), p = e.target.closest('[data-project]');
+    if (sm) setView({ kind: 'smart', id: sm.dataset.smart });
+    else if (p) setView({ kind: 'project', id: p.dataset.project });
+  });
   function setView(v, fromHistory) {
     prefs.view = v; savePrefs();
     document.body.classList.remove('side-open');
     if (!fromHistory) {
+      // History is at most [dashboard, current view]: back from any view lands on the dashboard,
+      // and only back from the dashboard leaves the app.
       const cur = history.state && history.state.view;
-      if (!cur || cur.kind !== v.kind || cur.id !== v.id) history.pushState({ view: v }, ''); navState = history.state;
+      if (isDash(v) && cur && !isDash(cur)) { history.back(); return; }   // popstate renders the dashboard
+      if (!isDash(v) && isDash(cur)) history.pushState({ view: v }, '');
+      else if (!isDash(v)) history.replaceState({ view: v }, '');
+      navState = history.state;
     }
     render();
     window.scrollTo(0, 0);
@@ -875,6 +950,7 @@
       if (window.innerWidth <= 860) $('.day-panel', body)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       return;
     }
+    if (action === 'goto') return setView({ kind: actEl.dataset.kind, id: actEl.dataset.id });
     if (action === 'cat-menu') return openCategoryMenu(actEl);
     if (action === 'toggle-group') {
       const g = actEl.closest('.group'), key = g.dataset.group;
@@ -1520,7 +1596,7 @@
     const ok = confirm(`Delete "${p.name}"${owned.length ? ` and its ${owned.length} task${owned.length === 1 ? '' : 's'}` : ''}?\n\nThis can't be undone.`);
     if (!ok) return;
     $('#projectModal').close();
-    setView({ kind: 'smart', id: 'today' });
+    setView({ kind: 'smart', id: 'dashboard' });
     // Firestore batches cap at 500 writes
     const refs = [projCol().doc(p.id), ...owned.map(t => taskCol().doc(t.id))];
     try {
