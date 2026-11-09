@@ -783,12 +783,57 @@
     if (s) setView({ kind: 'smart', id: s.dataset.smart });
     else if (p) setView({ kind: 'project', id: p.dataset.project });
   });
-  function setView(v) {
+  function setView(v, fromHistory) {
     prefs.view = v; savePrefs();
     document.body.classList.remove('side-open');
+    if (!fromHistory) {
+      const cur = history.state && history.state.view;
+      if (!cur || cur.kind !== v.kind || cur.id !== v.id) history.pushState({ view: v }, ''); navState = history.state;
+    }
     render();
     window.scrollTo(0, 0);
   }
+
+  /* ── Back navigation (browser back, Android back gesture, edge swipe) ──
+     Each view change is a history entry. Back first closes whatever is open
+     (menu, dialog, drawer, sidebar), then steps to the previous view. */
+  history.replaceState({ view: prefs.view }, '');
+  function closeTransient() {
+    let closed = false;
+    const dlg = document.querySelector('dialog[open]');
+    if (dlg) { dlg.close(); closed = true; }
+    if (!$('#popMenu').hidden) { closeMenu(); closed = true; }
+    if ($('#drawer').classList.contains('open')) { closeDrawer(); closed = true; }
+    if (document.body.classList.contains('side-open')) { document.body.classList.remove('side-open'); closed = true; }
+    return closed;
+  }
+  let navState = history.state;
+  window.addEventListener('popstate', e => {
+    if (closeTransient()) {
+      // Back only dismissed an overlay: stay on the current view
+      history.pushState(navState, '');
+      return;
+    }
+    navState = e.state;
+    const v = e.state && e.state.view;
+    if (v && (v.kind !== prefs.view.kind || v.id !== prefs.view.id)) setView(v, true);
+  });
+  // Swipe right from the left screen edge = back (for installed/standalone use, where there is no browser gesture)
+  (() => {
+    let sx = 0, sy = 0, tracking = false;
+    document.addEventListener('touchstart', e => {
+      const t = e.touches[0];
+      tracking = e.touches.length === 1 && t.clientX <= 24;
+      sx = t.clientX; sy = t.clientY;
+    }, { passive: true });
+    document.addEventListener('touchend', e => {
+      if (!tracking) return;
+      tracking = false;
+      const t = e.changedTouches[0], dx = t.clientX - sx, dy = Math.abs(t.clientY - sy);
+      if (dx > 70 && dx > dy * 2) history.back();
+    }, { passive: true });
+    document.addEventListener('touchcancel', () => { tracking = false; }, { passive: true });
+  })();
 
   $$('.tab').forEach(tb => tb.addEventListener('click', () => {
     const mode = tb.dataset.mode, v = prefs.view;
