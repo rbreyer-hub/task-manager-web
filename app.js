@@ -513,10 +513,6 @@
   function renderGroup(g) {
     const collapsed = prefs.collapsed[g.key] ?? !!g.defaultCollapsed;
     const total = g.tasks.length;
-    const statusBar = total ? STATUSES.map(s => {
-      const n = g.tasks.filter(t => (t.status || 'todo') === s.id).length;
-      return n ? `<span style="width:${(n / total) * 100}%;background:${s.color}" title="${s.label}: ${n}"></span>` : '';
-    }).join('') : '';
     return `
     <section class="group ${collapsed ? 'collapsed' : ''} ${g.reorder ? 'reorderable' : ''}" data-group="${esc(g.key)}" data-group-project="${g.projectId ?? ''}"${g.categoryId !== undefined ? ` data-group-category="${esc(g.categoryId)}"` : ''} style="--gc:${esc(g.color)}">
       <div class="group-head">
@@ -539,12 +535,6 @@
           <div class="c-check"></div>
           <div class="c-title"><input data-add-project="${g.projectId ?? ''}"${g.categoryId !== undefined ? ` data-add-cat="${esc(g.categoryId)}"` : ''} placeholder="+ Add task" maxlength="200"></div>
           <div></div><div></div><div></div><div></div><div></div>
-        </div>` : ''}
-        ${total ? `
-        <div class="trow summary-row">
-          <div></div><div></div><div></div>
-          <div><div class="status-bar">${statusBar}</div></div>
-          <div></div><div></div><div></div><div></div>
         </div>` : ''}
       </div></div>
     </section>`;
@@ -596,6 +586,11 @@
       <div class="c-sub">
         <input type="checkbox" data-action="sub-toggle" ${st.done ? 'checked' : ''} aria-label="Mark subtask complete">
         <span class="s-text" data-action="sub-edit" title="Click to rename">${esc(st.title)}</span>
+        ${st.notes ? `<span class="s-notes" title="${esc(st.notes)}">${NOTES_ICON}<span>${esc(st.notes)}</span></span>` : ''}
+        <span class="s-due ${st.due ? (st.due < todayStr() && !st.done ? 'overdue' : st.due === todayStr() && !st.done ? 'today' : '') : 'empty'}" data-action="sub-due" title="Set due date">
+          <span class="due-label">${st.due ? esc(fmtDue(st)) : '+ Due'}</span>
+          <input type="date" class="due-input" value="${esc(st.due || '')}" tabindex="-1" aria-label="Subtask due date">
+        </span>
         <button class="icon-btn sm s-del" data-action="sub-delete" aria-label="Delete subtask">${X_ICON}</button>
       </div>
     </div>`).join('') + `
@@ -856,6 +851,11 @@
       case 'sub-toggle': toggleSubtask(t, subId); return;
       case 'sub-delete': removeSubtask(t, subId); return;
       case 'sub-edit': startSubRename(actEl, t, subId); return;
+      case 'sub-due': {
+        const inp = $('.due-input', actEl);
+        try { inp.showPicker(); } catch (_) { inp.focus(); inp.click(); }
+        return;
+      }
       case 'toggle-done': toggleDone(t); break;
       case 'open': openDrawer(t.id); break;
       case 'status':
@@ -962,7 +962,9 @@
   body.addEventListener('change', e => {
     if (!e.target.classList.contains('due-input')) return;
     const t = tasks.find(x => x.id === e.target.closest('[data-id]').dataset.id);
-    if (t) setDue(t, e.target.value);
+    const subId = e.target.closest('[data-sub]')?.dataset.sub;
+    if (t && subId) saveSubtasks(t, subsOf(t).map(st => st.id === subId ? { ...st, due: e.target.value || null } : st));
+    else if (t) setDue(t, e.target.value);
   });
   body.addEventListener('keydown', e => {
     const inp = e.target;
@@ -1261,7 +1263,9 @@
       <li class="sub-item ${st.done ? 'done' : ''}" data-sub="${esc(st.id)}">
         <input type="checkbox" ${st.done ? 'checked' : ''} aria-label="Mark subtask complete">
         <input class="sub-title" value="${esc(st.title)}" maxlength="200" aria-label="Subtask">
+        <input type="date" class="sub-due" value="${esc(st.due || '')}" aria-label="Subtask due date" title="Due date">
         <button type="button" class="icon-btn sm" data-sub-del aria-label="Delete subtask">${X_ICON}</button>
+        <input class="sub-notes" value="${esc(st.notes || '')}" maxlength="500" placeholder="Add notes…" aria-label="Subtask notes">
       </li>`).join('');
   }
   function commitDrawerSubs() {
@@ -1273,6 +1277,8 @@
     const li = e.target.closest('[data-sub]'); if (!li) return;
     const st = draft.subtasks.find(x => x.id === li.dataset.sub);
     if (e.target.type === 'checkbox') st.done = e.target.checked;
+    else if (e.target.classList.contains('sub-due')) st.due = e.target.value || null;
+    else if (e.target.classList.contains('sub-notes')) st.notes = e.target.value.trim();
     else {
       const v = e.target.value.trim();
       if (!v) draft.subtasks = draft.subtasks.filter(x => x !== st);
@@ -1287,7 +1293,7 @@
     commitDrawerSubs();
   });
   $('#subList').addEventListener('keydown', e => {
-    if (e.key === 'Enter' && e.target.classList.contains('sub-title')) { e.preventDefault(); e.target.blur(); }
+    if (e.key === 'Enter' && (e.target.classList.contains('sub-title') || e.target.classList.contains('sub-notes'))) { e.preventDefault(); e.target.blur(); }
   });
   $('#subAdd').addEventListener('keydown', e => {
     if (e.key !== 'Enter') return;

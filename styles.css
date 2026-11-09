@@ -348,10 +348,6 @@ input[type=checkbox]:checked::after { transform: rotate(45deg) scale(1); }
 .add-row input:focus { border-color: var(--primary); background: var(--surface); }
 .add-row > div:not(.c-title):not(.bar) { border-right-color: transparent; }
 
-.summary-row { min-height: 34px; background: transparent; border-bottom: 0; }
-.summary-row > div { border-right: 0; }
-.status-bar { display: flex; height: 22px; width: calc(100% - 16px); margin: 6px 8px; border-radius: 2px; overflow: hidden; background: var(--surface-2); }
-.status-bar span { display: block; height: 100%; }
 
 /* ── Row drag to reorder ── */
 .c-check { gap: 2px; }
@@ -717,3 +713,21 @@ textarea { height: auto; padding: 10px; resize: vertical; line-height: 1.5; }
 .cat-item .icon-btn { opacity: 1; }
 .cat-dot { width: 18px; height: 18px; flex-shrink: 0; border: 0; border-radius: 50%; cursor: pointer; }
 .modal .cat-list { margin-bottom: 2px; }
+
+/* ── Subtask due dates & notes ── */
+.c-sub .s-notes { display: inline-flex; align-items: center; gap: 4px; min-width: 0; color: var(--muted); font-size: 12px; }
+.c-sub .s-notes span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+.c-sub .s-due { position: relative; margin-left: auto; flex-shrink: 0; cursor: pointer; font-size: 12px; padding: 2px 8px; border-radius: var(--radius-sm); color: var(--muted); }
+.c-sub .s-due:hover { background: var(--hover); }
+.c-sub .s-due.empty { opacity: 0; }
+.trow.sub:hover .s-due.empty { opacity: 1; }
+.c-sub .s-due.overdue { color: #e2445c; }
+.c-sub .s-due.today { color: #00a35f; }
+.c-sub .s-due .due-input { position: absolute; inset: 0; opacity: 0; pointer-events: none; width: 100%; }
+.c-sub .s-del { margin-left: 0; }
+.sub-item { flex-wrap: wrap; }
+.sub-item .sub-title { flex: 1; min-width: 0; }
+.sub-item .sub-due { height: 28px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: transparent; color: var(--text); padding: 0 4px; font-size: 12px; }
+.sub-item .sub-notes { flex-basis: 100%; margin-left: 26px; height: 26px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--muted); padding: 0 8px; font-size: 12px; outline: 0; }
+.sub-item .sub-notes:hover { border-color: var(--border); }
+.sub-item .sub-notes:focus { border-color: var(--primary); background: var(--surface); color: var(--text); }
