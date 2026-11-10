@@ -212,6 +212,28 @@
     if (!title) return removeSubtask(t, subId);
     saveSubtasks(t, subsOf(t).map(st => st.id === subId ? { ...st, title } : st));
   }
+  function setSubtaskNotes(t, subId, notes) {
+    saveSubtasks(t, subsOf(t).map(st => st.id === subId ? { ...st, notes } : st));
+  }
+  function startSubNoteEdit(el, t, subId) {
+    const cur = subsOf(t).find(st => st.id === subId)?.notes || '';
+    const inp = document.createElement('input');
+    inp.className = 's-edit s-note-edit'; inp.value = cur; inp.maxLength = 500; inp.placeholder = 'Add a note…';
+    el.replaceWith(inp);
+    inp.focus(); inp.select();
+    let done = false;
+    const finish = save => {
+      if (done) return; done = true;
+      const v = inp.value.trim();
+      if (save && v !== cur) setSubtaskNotes(t, subId, v);
+      else renderBody();
+    };
+    inp.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+      if (e.key === 'Escape') { e.stopPropagation(); finish(false); }
+    });
+    inp.addEventListener('blur', () => finish(true));
+  }
   function removeSubtask(t, subId) {
     saveSubtasks(t, subsOf(t).filter(st => st.id !== subId));
   }
@@ -651,7 +673,7 @@
       <div class="c-sub">
         <input type="checkbox" data-action="sub-toggle" ${st.done ? 'checked' : ''} aria-label="Mark subtask complete">
         <span class="s-text" data-action="sub-edit" title="Click to rename">${esc(st.title)}</span>
-        ${st.notes ? `<span class="s-notes" title="${esc(st.notes)}">${NOTES_ICON}<span>${esc(st.notes)}</span></span>` : ''}
+        <span class="s-notes ${st.notes ? '' : 'empty'}" data-action="sub-note" title="${st.notes ? esc(st.notes) : 'Add a note'}">${NOTES_ICON}<span>${st.notes ? esc(st.notes) : 'Add note'}</span></span>
         <span class="s-due ${st.due ? (st.due < todayStr() && !st.done ? 'overdue' : st.due === todayStr() && !st.done ? 'today' : '') : 'empty'}" data-action="sub-due" title="Set due date">
           <span class="due-label">${st.due ? esc(fmtDue(st)) : '+ Due'}</span>
           <input type="date" class="due-input" value="${esc(st.due || '')}" tabindex="-1" aria-label="Subtask due date">
@@ -972,6 +994,7 @@
       case 'sub-toggle': toggleSubtask(t, subId); return;
       case 'sub-delete': removeSubtask(t, subId); return;
       case 'sub-edit': startSubRename(actEl, t, subId); return;
+      case 'sub-note': startSubNoteEdit(actEl, t, subId); return;
       case 'sub-due': {
         const inp = $('.due-input', actEl);
         try { inp.showPicker(); } catch (_) { inp.focus(); inp.click(); }
