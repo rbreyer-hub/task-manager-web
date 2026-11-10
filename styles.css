@@ -719,7 +719,7 @@ textarea { height: auto; padding: 10px; resize: vertical; line-height: 1.5; }
 .c-sub .s-notes span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
 .c-sub .s-notes { cursor: text; padding: 2px 6px; border-radius: var(--radius-sm); }
 .c-sub .s-notes:hover { background: var(--hover); color: var(--text); }
-.c-sub .s-notes.empty { opacity: 0; }
+.c-sub .s-notes.empty { opacity: .45; }
 .trow.sub:hover .s-notes.empty, .c-sub .s-notes.empty:focus-visible { opacity: 1; }
 @media (hover: none) { .c-sub .s-notes.empty, .c-sub .s-due.empty { opacity: .6; } }
 .c-sub .s-note-edit { min-width: 120px; }
