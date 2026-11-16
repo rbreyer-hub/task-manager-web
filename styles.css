@@ -311,7 +311,7 @@ input[type=checkbox]:checked::after { transform: rotate(45deg) scale(1); }
 .pill.empty { background: transparent; color: var(--muted); }
 
 .c-due { justify-content: center; position: relative; cursor: pointer; padding: 0 8px; gap: 6px; }
-.c-due .due-input { position: absolute; inset: 0; opacity: 0; pointer-events: none; width: 100%; }
+.c-due .due-input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
 .due-label { font-size: 13px; white-space: nowrap; }
 .due-label.overdue { color: var(--overdue); font-weight: 600; }
 .due-label.today { color: var(--primary); font-weight: 600; }
@@ -691,7 +691,7 @@ textarea { height: auto; padding: 10px; resize: vertical; line-height: 1.5; }
 .c-sub .s-due.empty { opacity: 0; }
 .c-sub .s-due.overdue { color: #e2445c; }
 .c-sub .s-due.today { color: #00a35f; }
-.c-sub .s-due .due-input { position: absolute; inset: 0; opacity: 0; pointer-events: none; width: 100%; }
+.c-sub .s-due .due-input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
 .c-sub .s-del { margin-left: 0; }
 .sub-item { flex-wrap: wrap; }
 .sub-item .sub-title { flex: 1; min-width: 0; }

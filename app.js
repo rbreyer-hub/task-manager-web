@@ -997,7 +997,7 @@
       case 'sub-note': startSubNoteEdit(actEl, t, subId); return;
       case 'sub-due': {
         const inp = $('.due-input', actEl);
-        try { inp.showPicker(); } catch (_) { inp.focus(); inp.click(); }
+        openDatePicker(inp, e.target === inp);
         return;
       }
       case 'toggle-done': toggleDone(t); break;
@@ -1008,7 +1008,7 @@
         openMenu(actEl, optList(PRIORITIES, t.priority || ''), val => updateTask(t.id, { priority: val })); break;
       case 'due': {
         const inp = $('.due-input', actEl);
-        try { inp.showPicker(); } catch (_) { inp.focus(); inp.click(); }
+        openDatePicker(inp, e.target === inp);
         break;
       }
       case 'more':
@@ -1103,12 +1103,28 @@
     }
   });
 
+  /* Empty due dates open on today. The input sits over the cell, so a tap hits the native picker
+     directly (reliable on iOS); we also commit on blur, since picking the pre-filled today fires no change. */
+  function openDatePicker(inp, direct) {
+    if (!inp.value) inp.value = todayStr();
+    if (direct) return;
+    try { inp.showPicker(); } catch (_) { inp.focus(); inp.click(); }
+  }
+  body.addEventListener('focusin', e => {
+    if (e.target.classList.contains('due-input') && !e.target.value) e.target.value = todayStr();
+  });
+  body.addEventListener('focusout', e => {
+    if (e.target.classList.contains('due-input') && e.target.value !== e.target.defaultValue) commitDue(e.target);
+  });
+  function commitDue(inp) {
+    const t = tasks.find(x => x.id === inp.closest('[data-id]').dataset.id);
+    const subId = inp.closest('[data-sub]')?.dataset.sub;
+    if (t && subId) saveSubtasks(t, subsOf(t).map(st => st.id === subId ? { ...st, due: inp.value || null } : st));
+    else if (t) setDue(t, inp.value);
+  }
   body.addEventListener('change', e => {
     if (!e.target.classList.contains('due-input')) return;
-    const t = tasks.find(x => x.id === e.target.closest('[data-id]').dataset.id);
-    const subId = e.target.closest('[data-sub]')?.dataset.sub;
-    if (t && subId) saveSubtasks(t, subsOf(t).map(st => st.id === subId ? { ...st, due: e.target.value || null } : st));
-    else if (t) setDue(t, e.target.value);
+    commitDue(e.target);
   });
   body.addEventListener('keydown', e => {
     const inp = e.target;
