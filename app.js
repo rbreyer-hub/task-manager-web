@@ -431,7 +431,7 @@
       completed: tasks.length - open.length
     };
     const v = prefs.view;
-    $('#smartNav').innerHTML = SMART_VIEWS.map(s => `
+    $('#smartNav').innerHTML = SMART_VIEWS.filter(s => s.id !== 'dashboard').map(s => `
       <button class="nav-item ${v.kind === 'smart' && v.id === s.id ? 'active' : ''}" data-smart="${s.id}">
         <span class="nav-icon">${s.icon}</span>
         <span class="nav-name">${s.label}</span>
@@ -911,6 +911,10 @@
     const s = e.target.closest('[data-smart]'), p = e.target.closest('[data-project]');
     if (s) setView({ kind: 'smart', id: s.dataset.smart });
     else if (p) setView({ kind: 'project', id: p.dataset.project });
+  });
+  $('#brandHome').addEventListener('click', e => {
+    e.preventDefault();
+    if (!$('#app').hidden) setView({ kind: 'smart', id: 'dashboard' });
   });
   function setView(v, fromHistory) {
     prefs.view = v; savePrefs();

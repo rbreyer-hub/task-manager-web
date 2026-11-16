@@ -12,7 +12,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="styles.css?v=20261115e">
+<link rel="stylesheet" href="styles.css?v=20261115f">
 </head>
 <body>
 
@@ -21,10 +21,10 @@
   <button class="icon-btn menu-btn" id="menuBtn" aria-label="Toggle sidebar">
     <svg viewBox="0 0 24 24" width="20" height="20"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
   </button>
-  <div class="brand">
+  <a class="brand" id="brandHome" href="#" title="Dashboard" aria-label="Dashboard">
     <span class="brand-mark"><i></i><i></i><i></i></span>
     <span class="brand-name">Task Board</span>
-  </div>
+  </a>
   <div class="search-wrap" id="searchWrap" hidden>
     <svg viewBox="0 0 24 24" width="16" height="16"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M20 20l-3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
     <input id="search" type="search" placeholder="Search tasks" autocomplete="off">
@@ -222,6 +222,6 @@
 <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore-compat.js"></script>
 <script src="firebase-config.js"></script>
-<script src="app.js?v=20261115e"></script>
+<script src="app.js?v=20261115f"></script>
 </body>
 </html>

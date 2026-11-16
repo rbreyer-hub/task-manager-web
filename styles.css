@@ -141,7 +141,7 @@ input[type=checkbox]:checked::after { transform: rotate(45deg) scale(1); }
   border-bottom: 1px solid var(--border);
 }
 .menu-btn { display: none; }
-.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 17px; }
+.brand { color: inherit; text-decoration: none; cursor: pointer; display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 17px; }
 .brand-mark { display: inline-flex; gap: 3px; align-items: flex-end; height: 18px; }
 .brand-mark i { display: block; width: 6px; border-radius: 3px; }
 .brand-mark i:nth-child(1) { height: 10px; background: #e2445c; }
