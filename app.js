@@ -920,14 +920,14 @@
     let sx = 0, sy = 0, tracking = false;
     document.addEventListener('touchstart', e => {
       const t = e.touches[0];
-      tracking = e.touches.length === 1 && t.clientX <= 24;
+      tracking = e.touches.length === 1 && t.clientX <= 40;
       sx = t.clientX; sy = t.clientY;
     }, { passive: true });
     document.addEventListener('touchend', e => {
       if (!tracking) return;
       tracking = false;
       const t = e.changedTouches[0], dx = t.clientX - sx, dy = Math.abs(t.clientY - sy);
-      if (dx > 70 && dx > dy * 2) history.back();
+      if (dx > 60 && dx > dy * 1.5) { if (!closeTransient()) history.back(); }
     }, { passive: true });
     document.addEventListener('touchcancel', () => { tracking = false; }, { passive: true });
   })();
@@ -1332,7 +1332,7 @@
   /* ── Task drawer ── */
   function openDrawer(id) {
     const t = id ? tasks.find(x => x.id === id) : null;
-    editingTaskId = id;
+    editingTaskId = id; drawerToken++;
     const v = prefs.view;
     draft = t ? { ...t } : {
       title: '', notes: '', status: 'todo', priority: '',
@@ -1363,7 +1363,9 @@
     $('#drawerScrim').classList.add('open');
     setTimeout(() => { if (!t) $('#fTitle').focus(); }, 50);
   }
-  function closeDrawer() {
+  function closeDrawer(skipSave) {
+    if (skipSave !== true) flushSave();
+    clearTimeout(saveTimer);
     $('#drawer').classList.remove('open');
     $('#drawer').setAttribute('aria-hidden', 'true');
     $('#drawerScrim').classList.remove('open');
@@ -1416,6 +1418,7 @@
     renderDrawerSubs();
     const t = editingTaskId && tasks.find(x => x.id === editingTaskId);
     if (t) saveSubtasks(t, draft.subtasks.map(st => ({ ...st })));
+    else scheduleSave();
   }
   $('#subList').addEventListener('change', e => {
     const li = e.target.closest('[data-sub]'); if (!li) return;
@@ -1474,33 +1477,34 @@
 
   $('#fStatus').addEventListener('click', e => {
     const b = e.target.closest('[data-status]'); if (!b) return;
-    draft.status = b.dataset.status; renderPickers();
+    draft.status = b.dataset.status; renderPickers(); scheduleSave();
   });
   $('#fPriority').addEventListener('click', e => {
     const b = e.target.closest('[data-priority]'); if (!b) return;
-    draft.priority = b.dataset.priority; renderPickers();
+    draft.priority = b.dataset.priority; renderPickers(); scheduleSave();
   });
   ['#fReminder', '#fDue', '#fDueTime', '#fReminderAt'].forEach(s => $(s).addEventListener('input', () => {
     if (s === '#fDue' && !$('#fDue').value && !['none', 'custom'].includes($('#fReminder').value)) $('#fReminder').value = 'none';
     syncReminderUI();
   }));
-  $('#drawerClose').addEventListener('click', closeDrawer);
-  $('#cancelTaskBtn').addEventListener('click', closeDrawer);
-  $('#drawerScrim').addEventListener('click', closeDrawer);
+  $('#drawerClose').addEventListener('click', () => closeDrawer());
+  $('#drawerScrim').addEventListener('click', () => closeDrawer());
   $('#deleteTaskBtn').addEventListener('click', () => {
     if (!editingTaskId) return;
     const id = editingTaskId;
-    closeDrawer();
+    closeDrawer(true);
     deleteTask(id);
   });
-  $('#taskForm').addEventListener('submit', e => {
-    e.preventDefault();
+  /* Autosave: edits in the drawer save themselves shortly after you stop typing (and on close),
+     so there's no need to hunt for the Save button on a phone. */
+  let saveTimer, saveChain = Promise.resolve(), drawerToken = 0;
+  function collectDrawer() {
     const title = $('#fTitle').value.trim();
-    if (!title) { $('#fTitle').focus(); return; }
+    if (!title) return null;
     const mode = $('#fReminder').value;
     const due = $('#fDue').value, dueTime = due ? $('#fDueTime').value : '';
     const reminderAt = computeReminderAt(mode, due, dueTime, $('#fReminderAt').value);
-    const data = {
+    return {
       title,
       notes: $('#fNotes').value.trim(),
       projectId: $('#fProject').value || null,
@@ -1510,15 +1514,43 @@
       due, dueTime,
       reminderMode: reminderAt ? mode : 'none',
       reminderAt,
-      subtasks: draft.subtasks
+      subtasks: draft.subtasks.map(st => ({ ...st }))
     };
-    const prev = editingTaskId ? tasks.find(x => x.id === editingTaskId) : null;
-    if (!prev || prev.reminderAt !== reminderAt) data.reminded = false;
-    if (data.status === 'done' && (!prev || !isDone(prev))) { data.completedAt = Date.now(); if (prev) data.prevStatus = prev.status; }
-    if (data.status !== 'done') data.completedAt = null;
-    if (prev) updateTask(prev.id, data);
-    else createTask(data).then(() => toast('Task created'));
+  }
+  function flushSave() {
+    clearTimeout(saveTimer);
+    if (!draft) return;
+    const data = collectDrawer();
+    if (!data) return;
+    const token = drawerToken, id0 = editingTaskId;
+    const reminderAt = data.reminderAt;
+    saveChain = saveChain.then(async () => {
+      const id = id0 || (drawerToken === token ? editingTaskId : null);
+      const prev = id ? tasks.find(x => x.id === id) : null;
+      if (!prev || prev.reminderAt !== reminderAt) data.reminded = false;
+      if (data.status === 'done' && (!prev || !isDone(prev))) { data.completedAt = Date.now(); if (prev) data.prevStatus = prev.status; }
+      if (data.status !== 'done') data.completedAt = null;
+      let ok;
+      if (id) ok = await updateTask(id, data).then(() => true, () => false);
+      else {
+        const ref = await createTask(data);
+        ok = !!ref;
+        if (ref && drawerToken === token && draft) { editingTaskId = ref.id; $('#deleteTaskBtn').hidden = false; }
+      }
+      if (ok) toast('Saved ✓', { duration: 1200 });
+    });
     if (reminderAt && 'Notification' in window && Notification.permission === 'default') requestNotif();
+  }
+  function scheduleSave() {
+    if (!draft) return;
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(flushSave, 700);
+  }
+  $('#taskForm').addEventListener('input', scheduleSave);
+  $('#taskForm').addEventListener('change', scheduleSave);
+  $('#taskForm').addEventListener('submit', e => {
+    e.preventDefault();
+    if (!$('#fTitle').value.trim()) { $('#fTitle').focus(); return; }
     closeDrawer();
   });
   document.addEventListener('keydown', e => {
