@@ -12,7 +12,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="styles.css?v=20261115d">
+<link rel="stylesheet" href="styles.css?v=20261115e">
 </head>
 <body>
 
@@ -208,12 +208,20 @@
 <!-- ── Floating pill menu ── -->
 <div class="pop-menu" id="popMenu" hidden></div>
 
+<!-- ── Mobile bottom bar + projects sheet ── -->
+<div class="sheet-scrim" id="sheetScrim"></div>
+<div class="sheet" id="projSheet" aria-hidden="true">
+  <div class="sheet-grab"></div>
+  <div id="sheetBody"></div>
+</div>
+<nav class="bottom-nav" id="bottomNav" aria-label="Main"></nav>
+
 <div class="toast" id="toast"><span id="toastMsg"></span><button id="toastAction" hidden></button></div>
 
 <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore-compat.js"></script>
 <script src="firebase-config.js"></script>
-<script src="app.js?v=20261115d"></script>
+<script src="app.js?v=20261115e"></script>
 </body>
 </html>

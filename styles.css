@@ -722,6 +722,48 @@ textarea { height: auto; padding: 10px; resize: vertical; line-height: 1.5; }
 @media (max-width: 860px) {
 }
 
+/* ── Mobile bottom tab bar + sheet ── */
+.bottom-nav, .sheet, .sheet-scrim { display: none; }
+@media (max-width: 860px) {
+  .bottom-nav {
+    display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+    background: var(--surface); border-top: 1px solid var(--border);
+    padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
+  }
+  body:not(.is-app) .bottom-nav { display: none; }
+  .bn-item {
+    flex: 1; position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+    min-height: 48px; border: 0; background: none; color: var(--muted); font-size: 11px; font-weight: 500; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .bn-item.active { color: var(--primary); }
+  .bn-add svg { background: var(--primary); color: #fff; border-radius: 50%; width: 46px; height: 46px; padding: 10px; box-shadow: var(--shadow-2); }
+  .bn-badge {
+    position: absolute; top: 2px; left: calc(50% + 6px); min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
+    background: var(--danger, #e2445c); color: #fff; font-size: 10px; font-style: normal; line-height: 16px; text-align: center;
+  }
+  .sheet-scrim { display: block; position: fixed; inset: 0; z-index: 44; background: rgba(0,0,0,.35); opacity: 0; pointer-events: none; transition: opacity .2s; }
+  .sheet {
+    display: block; position: fixed; left: 0; right: 0; bottom: 0; z-index: 45; max-height: 75vh; overflow-y: auto;
+    background: var(--surface); border-radius: 16px 16px 0 0; box-shadow: var(--shadow-2);
+    padding: 8px 12px calc(16px + env(safe-area-inset-bottom)); transform: translateY(105%); transition: transform .22s ease;
+  }
+  body.sheet-open .sheet { transform: none; }
+  body.sheet-open .sheet-scrim { opacity: 1; pointer-events: auto; }
+  .sheet-grab { width: 40px; height: 4px; border-radius: 2px; background: var(--border-2, var(--border)); margin: 4px auto 8px; }
+  .sheet-title { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); padding: 10px 8px 4px; }
+  .sheet-row {
+    display: flex; align-items: center; gap: 12px; width: 100%; min-height: 48px; padding: 0 10px; border: 0; border-radius: var(--radius);
+    background: none; color: var(--text); font-size: 16px; text-align: left; cursor: pointer;
+  }
+  .sheet-row.active { background: var(--hover); font-weight: 600; }
+  .sheet-name { flex: 1; }
+  .sheet-n { color: var(--muted); font-size: 13px; }
+  .sheet-new { color: var(--primary); font-weight: 500; }
+  .main-body { padding-bottom: 110px; }
+  .toast { bottom: calc(80px + env(safe-area-inset-bottom)); }
+}
+
 /* Hover styles only where a real hover exists: on iOS the first tap on a :hover-reveal element is eaten as "hover", so checkboxes needed two taps */
 @media (hover: hover) {
   input[type=checkbox]:hover { border-color: var(--check-on); }

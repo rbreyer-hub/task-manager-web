@@ -300,7 +300,7 @@
   function onData() {
     if (!loaded.projects || !loaded.tasks) return;
     $('#loading').hidden = true;
-    $('#app').hidden = false;
+    $('#app').hidden = false; document.body.classList.add('is-app');
     if (prefs.view.kind === 'project' && !projectOf(prefs.view.id)) prefs.view = { kind: 'smart', id: 'dashboard' };
     render();
     checkReminders();
@@ -329,7 +329,7 @@
       chip.hidden = true;
       $('#notifBtn').hidden = true;
       $('#searchWrap').hidden = true;
-      $('#app').hidden = true;
+      $('#app').hidden = true; document.body.classList.remove('is-app'); setSheet(false);
       $('#loading').hidden = true;
       $('#landing').hidden = false;
     }
@@ -437,6 +437,7 @@
         <span class="nav-name">${s.label}</span>
         <span class="nav-count ${s.id === 'overdue' && counts.overdue ? 'alert' : ''}">${counts[s.id] || ''}</span>
       </button>`).join('');
+    renderBottomNav();
     $('#projectNav').innerHTML = projects.length ? projects.map(p => `
       <button class="nav-item ${v.kind === 'project' && v.id === p.id ? 'active' : ''}" data-project="${p.id}">
         <span class="proj-dot" style="background:${esc(p.color)}"></span>
@@ -445,6 +446,53 @@
       </button>`).join('')
       : `<div class="side-empty">No projects yet</div>`;
   }
+
+  /* Mobile bottom tab bar + "Projects" bottom sheet */
+  const BN_ICONS = {
+    dashboard: '<svg viewBox="0 0 24 24" width="22" height="22"><path d="M4 11l8-7 8 7v9a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>',
+    today: '<svg viewBox="0 0 24 24" width="22" height="22"><rect x="3" y="5" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 10h18M8 3v4M16 3v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+    add: '<svg viewBox="0 0 24 24" width="26" height="26"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>',
+    all: '<svg viewBox="0 0 24 24" width="22" height="22"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>',
+    projects: '<svg viewBox="0 0 24 24" width="22" height="22"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>'
+  };
+  function renderBottomNav() {
+    const v = prefs.view, today = todayStr();
+    const dueN = tasks.filter(t => !isDone(t) && t.due && t.due <= today).length;
+    const smart = (id, label) => `<button class="bn-item ${v.kind === 'smart' && v.id === id ? 'active' : ''}" data-smart="${id}">${BN_ICONS[id]}<span>${label}</span>${id === 'today' && dueN ? `<i class="bn-badge">${dueN}</i>` : ''}</button>`;
+    $('#bottomNav').innerHTML =
+      smart('dashboard', 'Home') + smart('today', 'Today') +
+      `<button class="bn-item bn-add" data-bn="add" aria-label="New task">${BN_ICONS.add}</button>` +
+      smart('all', 'All') +
+      `<button class="bn-item ${v.kind === 'project' ? 'active' : ''}" data-bn="projects">${BN_ICONS.projects}<span>Projects</span></button>`;
+    const row = (attr, id, label, active, dot, n) => `<button class="sheet-row ${active ? 'active' : ''}" ${attr}="${id}">${dot ? `<span class="proj-dot" style="background:${esc(dot)}"></span>` : ''}<span class="sheet-name">${esc(label)}</span><span class="sheet-n">${n || ''}</span></button>`;
+    const open = tasks.filter(t => !isDone(t));
+    $('#sheetBody').innerHTML =
+      `<div class="sheet-title">Projects</div>` +
+      (projects.length ? projects.map(p => row('data-project', p.id, p.name, v.kind === 'project' && v.id === p.id, p.color, open.filter(t => t.projectId === p.id).length)).join('') : `<div class="side-empty">No projects yet</div>`) +
+      `<button class="sheet-row sheet-new" data-bn="new-project">+ New project</button>` +
+      `<div class="sheet-title">Lists</div>` +
+      row('data-smart', 'upcoming', 'Upcoming', v.kind === 'smart' && v.id === 'upcoming', null, open.filter(t => t.due && t.due > today).length) +
+      row('data-smart', 'overdue', 'Overdue', v.kind === 'smart' && v.id === 'overdue', null, open.filter(isOverdue).length) +
+      row('data-smart', 'completed', 'Completed', v.kind === 'smart' && v.id === 'completed', null, tasks.length - open.length);
+  }
+  function setSheet(on) {
+    document.body.classList.toggle('sheet-open', on);
+    $('#projSheet').setAttribute('aria-hidden', String(!on));
+  }
+  function bottomClick(e) {
+    const sm = e.target.closest('[data-smart]'), p = e.target.closest('[data-project]'), bn = e.target.closest('[data-bn]');
+    if (sm) { setSheet(false); setView({ kind: 'smart', id: sm.dataset.smart }); }
+    else if (p) { setSheet(false); setView({ kind: 'project', id: p.dataset.project }); }
+    else if (bn) {
+      const k = bn.dataset.bn;
+      if (k === 'add') { setSheet(false); openDrawer(null); }
+      else if (k === 'projects') setSheet(!document.body.classList.contains('sheet-open'));
+      else if (k === 'new-project') { setSheet(false); $('#addProjectBtn').click(); }
+    }
+  }
+  $('#bottomNav').addEventListener('click', bottomClick);
+  $('#projSheet').addEventListener('click', bottomClick);
+  $('#sheetScrim').addEventListener('click', () => setSheet(false));
 
   function renderHeader() {
     const v = prefs.view;
@@ -890,6 +938,7 @@
     if (dlg) { dlg.close(); closed = true; }
     if (!$('#popMenu').hidden) { closeMenu(); closed = true; }
     if ($('#drawer').classList.contains('open')) { closeDrawer(); closed = true; }
+    if (document.body.classList.contains('sheet-open')) { setSheet(false); closed = true; }
     if (document.body.classList.contains('side-open')) { document.body.classList.remove('side-open'); closed = true; }
     return closed;
   }
