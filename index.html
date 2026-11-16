@@ -12,7 +12,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="styles.css?v=20261116a">
+<link rel="stylesheet" href="styles.css?v=20261116b">
 </head>
 <body>
 
@@ -175,6 +175,17 @@
       <label class="block-label" for="fNotes">Notes</label>
       <textarea id="fNotes" rows="6" placeholder="Add details, links, checklists…"></textarea>
 
+      <div class="block-label sub-head">
+        <span>Comments</span>
+        <span id="commentCount"></span>
+      </div>
+      <ul class="comment-list" id="commentList"></ul>
+      <div class="comment-add" id="commentAddRow">
+        <textarea id="commentInput" rows="2" maxlength="2000" placeholder="Write a comment… (Ctrl+Enter to post)"></textarea>
+        <button type="button" class="btn btn-primary" id="commentPost">Post</button>
+      </div>
+      <small class="hint" id="commentHint" hidden>Comments can be added once the task is saved.</small>
+
       <p class="meta-line" id="taskMeta"></p>
     </div>
     <div class="drawer-foot">
@@ -222,6 +233,6 @@
 <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore-compat.js"></script>
 <script src="firebase-config.js"></script>
-<script src="app.js?v=20261116a"></script>
+<script src="app.js?v=20261116b"></script>
 </body>
 </html>

@@ -81,6 +81,7 @@
   const ALERT_ICON = '<span class="alert-mark" aria-hidden="true">!</span>';
   const labelHtml = o => (o.alert ? ALERT_ICON : '') + o.label;
   const subsOf = t => Array.isArray(t.subtasks) ? t.subtasks : [];
+  const commentsOf = t => Array.isArray(t.comments) ? t.comments : [];
   const newSubId = () => Math.random().toString(36).slice(2, 10);
   const catsOf = p => Array.isArray(p?.categories) ? p.categories : [];
   const categoryOf = t => catsOf(projectOf(t.projectId)).find(c => c.id === t.categoryId) || null;
@@ -303,6 +304,10 @@
     $('#app').hidden = false; document.body.classList.add('is-app');
     if (prefs.view.kind === 'project' && !projectOf(prefs.view.id)) prefs.view = { kind: 'smart', id: 'dashboard' };
     render();
+    if (editingTaskId) {   // new task just got created, or a comment arrived from another device
+      const t = tasks.find(x => x.id === editingTaskId);
+      if (t && ($('#commentAddRow').hidden || $('#commentList').children.length !== commentsOf(t).length)) renderComments();
+    }
     checkReminders();
   }
 
@@ -693,6 +698,7 @@
         <span class="t-text">${esc(t.title)}</span>
         ${subs.length ? `<button class="t-subs ${subsDone === subs.length ? 'all' : ''}" data-action="toggle-subs" title="Subtasks">${CHECKLIST_ICON}${subsDone}/${subs.length}</button>` : ''}
         ${t.notes ? `<span class="t-notes" title="Has notes">${NOTES_ICON}</span>` : ''}
+        ${commentsOf(t).length ? `<span class="t-notes t-comments" title="${commentsOf(t).length} comment(s)">${NOTES_ICON}<b>${commentsOf(t).length}</b></span>` : ''}
         ${showProj ? `<span class="t-proj">${esc(proj.name)}</span>` : ''}
         ${showCat ? `<span class="t-cat" style="--cc:${esc(cat.color)}">${esc(cat.name)}</span>` : ''}
         <span class="t-open">Open</span>
@@ -1426,6 +1432,7 @@
     $('#fReminderAt').value = draft.reminderAt ? toLocalInput(draft.reminderAt) : '';
     renderPickers();
     renderDrawerSubs();
+    renderComments();
     syncReminderUI();
     $('#deleteTaskBtn').hidden = !t;
     $('#taskMeta').textContent = t
@@ -1436,6 +1443,53 @@
     $('#drawerScrim').classList.add('open');
     setTimeout(() => { if (!t) $('#fTitle').focus(); }, 50);
   }
+  /* ── Comments (saved immediately, separate from the autosaved draft) ── */
+  function renderComments() {
+    const t = editingTaskId && tasks.find(x => x.id === editingTaskId);
+    const list = t ? commentsOf(t) : [];
+    $('#commentAddRow').hidden = !t;
+    $('#commentHint').hidden = !!t;
+    $('#commentCount').textContent = list.length ? String(list.length) : '';
+    $('#commentList').innerHTML = list.map(c => `
+      <li class="comment" data-cid="${esc(c.id)}">
+        <div class="comment-head"><b>${esc(c.author || 'You')}</b>
+          <span>${new Date(c.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}${c.edited ? ' · edited' : ''}</span>
+          <span class="spacer"></span>
+          <button type="button" class="link-btn" data-c="edit">Edit</button>
+          <button type="button" class="link-btn" data-c="del">Delete</button></div>
+        <div class="comment-text">${esc(c.text)}</div>
+      </li>`).join('');
+  }
+  function saveComments(t, list) {
+    t.comments = list;
+    return updateTask(t.id, { comments: list }).then(renderComments);
+  }
+  function postComment() {
+    const inp = $('#commentInput'), text = inp.value.trim();
+    const t = editingTaskId && tasks.find(x => x.id === editingTaskId);
+    if (!t || !text) return;
+    inp.value = '';
+    saveComments(t, [...commentsOf(t), { id: 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), text, author: user?.displayName || '', at: Date.now() }]);
+  }
+  $('#commentPost').addEventListener('click', postComment);
+  $('#commentInput').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); postComment(); } });
+  $('#commentList').addEventListener('click', e => {
+    const act = e.target.dataset.c; if (!act) return;
+    const t = tasks.find(x => x.id === editingTaskId), li = e.target.closest('[data-cid]');
+    const c = t && commentsOf(t).find(x => x.id === li.dataset.cid); if (!c) return;
+    if (act === 'del') {
+      if (confirm('Delete this comment?')) saveComments(t, commentsOf(t).filter(x => x !== c));
+    } else {
+      const box = li.querySelector('.comment-text');
+      box.innerHTML = `<textarea rows="3" maxlength="2000"></textarea><div class="comment-edit-actions"><button type="button" class="btn btn-primary" data-c="save">Save</button><button type="button" class="btn" data-c="cancel">Cancel</button></div>`;
+      box.querySelector('textarea').value = c.text; box.querySelector('textarea').focus();
+    }
+    if (act === 'save') {
+      const text = li.querySelector('textarea').value.trim();
+      if (text) saveComments(t, commentsOf(t).map(x => x === c ? { ...x, text, edited: true } : x));
+    }
+    if (act === 'cancel') renderComments();
+  });
   function closeDrawer(skipSave) {
     if (skipSave !== true) flushSave();
     clearTimeout(saveTimer);
