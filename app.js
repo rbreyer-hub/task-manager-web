@@ -917,17 +917,25 @@
     if (!$('#app').hidden) setView({ kind: 'smart', id: 'dashboard' });
   });
   function setView(v, fromHistory) {
-    prefs.view = v; savePrefs();
     document.body.classList.remove('side-open');
     if (!fromHistory) {
       // History is at most [dashboard, current view]: back from any view lands on the dashboard,
       // and only back from the dashboard leaves the app.
       const cur = history.state && history.state.view;
-      if (isDash(v) && cur && !isDash(cur)) { history.back(); return; }   // popstate renders the dashboard
+      if (isDash(v) && cur && !isDash(cur)) {
+        // popstate renders the dashboard (prefs.view is still the old view, so it sees a change).
+        // If there is no dashboard entry to go back to, popstate never fires: fall back to rendering directly.
+        history.back();
+        setTimeout(() => {
+          if (!isDash(prefs.view)) { history.replaceState({ view: v }, ''); navState = history.state; setView(v, true); }
+        }, 300);
+        return;
+      }
       if (!isDash(v) && isDash(cur)) history.pushState({ view: v }, '');
       else if (!isDash(v)) history.replaceState({ view: v }, '');
       navState = history.state;
     }
+    prefs.view = v; savePrefs();
     render();
     window.scrollTo(0, 0);
   }
