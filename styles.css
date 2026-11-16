@@ -719,19 +719,7 @@ textarea { height: auto; padding: 10px; resize: vertical; line-height: 1.5; }
 .dash-proj-n { color: var(--muted); font-size: 12px; min-width: 36px; text-align: right; }
 
 /* ── Mobile quick nav: Home, All tasks, projects ── */
-.mobile-nav { display: none; }
 @media (max-width: 860px) {
-  .mobile-nav {
-    display: flex; gap: 8px; overflow-x: auto; padding: 10px 16px; position: sticky; top: var(--topbar-h); z-index: 10;
-    background: var(--bg, var(--surface)); border-bottom: 1px solid var(--border); scrollbar-width: none;
-  }
-  .mobile-nav::-webkit-scrollbar { display: none; }
-  .m-chip {
-    display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; height: 34px; padding: 0 14px;
-    border: 1px solid var(--border); border-radius: 17px; background: var(--surface); color: var(--text);
-    font-weight: 500; white-space: nowrap; cursor: pointer;
-  }
-  .m-chip.active { background: var(--primary); border-color: var(--primary); color: #fff; }
 }
 
 /* Hover styles only where a real hover exists: on iOS the first tap on a :hover-reveal element is eaten as "hover", so checkboxes needed two taps */

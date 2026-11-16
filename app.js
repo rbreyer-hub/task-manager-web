@@ -437,12 +437,6 @@
         <span class="nav-name">${s.label}</span>
         <span class="nav-count ${s.id === 'overdue' && counts.overdue ? 'alert' : ''}">${counts[s.id] || ''}</span>
       </button>`).join('');
-    const chip = (attr, id, label, active, dot) => `<button class="m-chip ${active ? 'active' : ''}" ${attr}="${id}">${dot ? `<span class="proj-dot" style="background:${esc(dot)}"></span>` : ''}${esc(label)}</button>`;
-    $('#mobileNav').innerHTML =
-      chip('data-smart', 'dashboard', 'Home', v.kind === 'smart' && v.id === 'dashboard') +
-      chip('data-smart', 'all', 'All tasks', v.kind === 'smart' && v.id === 'all') +
-      projects.map(p => chip('data-project', p.id, p.name, v.kind === 'project' && v.id === p.id, p.color)).join('');
-    $('#mobileNav .m-chip.active')?.scrollIntoView({ inline: 'center', block: 'nearest' });
     $('#projectNav').innerHTML = projects.length ? projects.map(p => `
       <button class="nav-item ${v.kind === 'project' && v.id === p.id ? 'active' : ''}" data-project="${p.id}">
         <span class="proj-dot" style="background:${esc(p.color)}"></span>
@@ -868,11 +862,6 @@
   $('#sidebar').addEventListener('click', e => {
     const s = e.target.closest('[data-smart]'), p = e.target.closest('[data-project]');
     if (s) setView({ kind: 'smart', id: s.dataset.smart });
-    else if (p) setView({ kind: 'project', id: p.dataset.project });
-  });
-  $('#mobileNav').addEventListener('click', e => {
-    const sm = e.target.closest('[data-smart]'), p = e.target.closest('[data-project]');
-    if (sm) setView({ kind: 'smart', id: sm.dataset.smart });
     else if (p) setView({ kind: 'project', id: p.dataset.project });
   });
   function setView(v, fromHistory) {
