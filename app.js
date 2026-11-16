@@ -358,7 +358,8 @@
     if (search) {
       const q = search.toLowerCase();
       list = list.filter(t => t.title.toLowerCase().includes(q) || (t.notes || '').toLowerCase().includes(q) ||
-        subsOf(t).some(st => st.title.toLowerCase().includes(q)));
+        subsOf(t).some(st => st.title.toLowerCase().includes(q)) ||
+        commentsOf(t).some(c => c.text.toLowerCase().includes(q)));
     }
     if (hidingDone() && !opts.withDone) list = list.filter(t => !isDone(t));
     return list;
@@ -758,7 +759,8 @@
     if (v.kind === 'project') list = list.filter(t => t.projectId === v.id);
     if (search) {
       const q = search.toLowerCase();
-      list = list.filter(t => t.title.toLowerCase().includes(q) || (t.notes || '').toLowerCase().includes(q));
+      list = list.filter(t => t.title.toLowerCase().includes(q) || (t.notes || '').toLowerCase().includes(q) ||
+        commentsOf(t).some(c => c.text.toLowerCase().includes(q)));
     }
     return list;
   }
