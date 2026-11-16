@@ -701,7 +701,6 @@
       <div><button class="pill ${pr.id ? '' : 'empty'}" data-action="priority" style="${pr.id ? `background:${pr.color}` : ''}">${pr.id ? labelHtml(pr) : ''}</button></div>
       <div class="c-due" data-action="due">
         <span class="due-label ${t.due ? dueCls : 'empty'}">${t.due ? esc(fmtDue(t)) : '—'}</span>
-        <input type="date" class="due-input" value="${esc(t.due || '')}" tabindex="-1" aria-label="Due date">
       </div>
       <div class="c-remind ${hasRem ? (t.reminded ? 'fired' : 'on') : ''}" data-action="open" title="${hasRem ? (t.reminded ? 'Reminder sent' : 'Reminder set') : 'Add reminder'}">
         ${hasRem ? `${BELL_ICON}<span>${esc(fmtReminder(t.reminderAt))}</span>` : '<span>—</span>'}
@@ -890,7 +889,7 @@
 
   /* ── Event wiring ── */
   document.addEventListener('click', e => {
-    if (!$('#popMenu').hidden && !e.target.closest('#popMenu') && !e.target.closest('[data-action="status"],[data-action="priority"],[data-action="more"],[data-action="cat-menu"]')) closeMenu();
+    if (!$('#popMenu').hidden && !e.target.closest('#popMenu') && !e.target.closest('[data-action="status"],[data-action="priority"],[data-action="due"],[data-action="more"],[data-action="cat-menu"]')) closeMenu();
   });
 
   $('#authSignIn').addEventListener('click', signIn);
@@ -1057,8 +1056,16 @@
       case 'priority':
         openMenu(actEl, optList(PRIORITIES, t.priority || ''), val => updateTask(t.id, { priority: val })); break;
       case 'due': {
-        const inp = $('.due-input', actEl);
-        openDatePicker(inp, e.target === inp);
+        const today = todayStr(), cur = t.due || '';
+        openMenu(actEl, `
+          <button class="pop-item" data-val="${today}">Today</button>
+          <button class="pop-item" data-val="${addDays(today, 1)}">Tomorrow</button>
+          <button class="pop-item" data-val="${addDays(today, 7)}">Next week</button>
+          <div class="pop-date"><input type="date" id="popDue" value="${esc(cur)}" aria-label="Pick a date"><button class="pop-item" data-val="__pick">Set</button></div>
+          ${cur ? '<button class="pop-item" data-val="">Clear</button>' : ''}`, val => {
+          if (val === '__pick') val = $('#popDue').value;
+          if (val !== cur) setDue(t, val);
+        });
         break;
       }
       case 'more':

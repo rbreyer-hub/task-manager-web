@@ -813,3 +813,6 @@ textarea { height: auto; padding: 10px; resize: vertical; line-height: 1.5; }
 @media (hover: none) {
   input[type=checkbox], button, .pill, .c-due { touch-action: manipulation; }
 }
+.pop-menu .pop-date { display: flex; gap: 6px; padding: 4px 6px; align-items: center; }
+.pop-menu .pop-date input { flex: 1; min-width: 0; font: inherit; padding: 4px 6px; }
+.pop-menu .pop-date .pop-item { width: auto; font-weight: 600; }
