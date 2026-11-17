@@ -110,6 +110,17 @@
     });
     return out;
   }
+  /* A project plus everything nested under it; tasks of sub-projects roll up into their parents */
+  function subtreeIds(id) {
+    const out = new Set([id]), stack = [id];
+    while (stack.length) { const cur = stack.pop(); projects.forEach(p => { if (p.parentId === cur && !out.has(p.id)) { out.add(p.id); stack.push(p.id); } }); }
+    return out;
+  }
+  function projCounts(list) {   // project id → number of tasks in `list` in it or any sub-project
+    const m = {};
+    list.forEach(t => { for (let p = projectOf(t.projectId), n = 0; p && n < 50; p = projectOf(p.parentId), n++) m[p.id] = (m[p.id] || 0) + 1; });
+    return m;
+  }
   const indentName = p => '\u00a0\u00a0'.repeat(projDepth(p)) + (projDepth(p) ? '↳ ' : '') + p.name;
   const isDone = t => t.status === 'done';
   const ALERT_ICON = '<span class="alert-mark" aria-hidden="true">!</span>';
@@ -414,7 +425,7 @@
   function viewTasks(opts = {}) {
     const v = prefs.view, today = todayStr();
     let list = tasks;
-    if (v.kind === 'project') list = list.filter(t => t.projectId === v.id);
+    if (v.kind === 'project') { const ids = subtreeIds(v.id); list = list.filter(t => ids.has(t.projectId)); }
     else if (v.id === 'today')     list = list.filter(t => !isDone(t) && t.due && t.due <= today);
     else if (v.id === 'upcoming')  list = list.filter(t => !isDone(t) && t.due && t.due > today);
     else if (v.id === 'overdue')   list = list.filter(isOverdue);
@@ -443,7 +454,7 @@
     const v = prefs.view;
     if (v.kind === 'project') {
       const p = projectOf(v.id), cats = catsOf(p);
-      const open = list.filter(t => !isDone(t)).sort(sortManual);
+      const open = list.filter(t => !isDone(t) && t.projectId === p.id).sort(sortManual);
       const filed = t => cats.some(c => c.id === t.categoryId);
       const loose = open.filter(t => !filed(t));
       const groups = [];
@@ -454,6 +465,11 @@
         const ct = open.filter(t => t.categoryId === c.id);
         if (search && !ct.length) return;
         groups.push({ key: `p:${p.id}:c:${c.id}`, name: c.name, color: c.color, projectId: p.id, categoryId: c.id, category: true, tasks: ct, canAdd: true, reorder: !search });
+      });
+      // Sub-projects: one group each, in sidebar order (add/reorder from the sub-project's own page)
+      projects.filter(d => d.id !== p.id && subtreeIds(p.id).has(d.id)).forEach(d => {
+        const dt = list.filter(t => !isDone(t) && t.projectId === d.id).sort(sortManual);
+        if (dt.length) groups.push({ key: `p:${p.id}:sub:${d.id}`, name: indentName(d).replace(/^[\u00a0]*/, '').replace(/^↳ /, ''), color: d.color, projectId: d.id, link: true, tasks: dt, canAdd: false, reorder: false });
       });
       if (!hidingDone()) groups.push({ key: `p:${p.id}:done`, name: 'Completed', color: '#00c875', projectId: p.id, tasks: list.filter(isDone).sort(sortDone), canAdd: false, defaultCollapsed: true, done: true });
       return groups;
@@ -508,6 +524,7 @@
         <span class="nav-count ${s.id === 'overdue' && counts.overdue ? 'alert' : ''}">${counts[s.id] || ''}</span>
       </button>`).join('');
     renderBottomNav();
+    const pc = projCounts(open);
     $('#projectNav').innerHTML = projects.length ? visibleProjects().map(p => {
       const kids = projMeta[p.id]?.kids, shut = prefs.projCollapsed[p.id];
       return `
@@ -516,7 +533,7 @@
         <span class="proj-dot" style="background:${esc(p.color)}"></span>
         <span class="nav-name">${esc(p.name)}</span>
         <span class="proj-add" data-addsub="${p.id}" role="button" title="Add sub-project" aria-label="Add sub-project">+</span>
-        <span class="nav-count">${open.filter(t => t.projectId === p.id).length || ''}</span>
+        <span class="nav-count">${pc[p.id] || ''}</span>
       </button>`; }).join('')
       : `<div class="side-empty">No projects yet</div>`;
   }
@@ -539,10 +556,10 @@
       smart('all', 'All') +
       `<button class="bn-item ${v.kind === 'project' ? 'active' : ''}" data-bn="projects">${BN_ICONS.projects}<span>Projects</span></button>`;
     const row = (attr, id, label, active, dot, n) => `<button class="sheet-row ${active ? 'active' : ''}" ${attr}="${id}">${dot ? `<span class="proj-dot" style="background:${esc(dot)}"></span>` : ''}<span class="sheet-name">${esc(label)}</span><span class="sheet-n">${n || ''}</span></button>`;
-    const open = tasks.filter(t => !isDone(t));
+    const open = tasks.filter(t => !isDone(t)), pcs = projCounts(open);
     $('#sheetBody').innerHTML =
       `<div class="sheet-title">Projects</div>` +
-      (projects.length ? projects.filter(p => visibleProjects().includes(p)).map(p => row('data-project', p.id, indentName(p), v.kind === 'project' && v.id === p.id, p.color, open.filter(t => t.projectId === p.id).length)).join('') : `<div class="side-empty">No projects yet</div>`) +
+      (projects.length ? projects.filter(p => visibleProjects().includes(p)).map(p => row('data-project', p.id, indentName(p), v.kind === 'project' && v.id === p.id, p.color, pcs[p.id])).join('') : `<div class="side-empty">No projects yet</div>`) +
       `<button class="sheet-row sheet-new" data-bn="new-project">+ New project</button>` +
       `<div class="sheet-title">Lists</div>` +
       row('data-smart', 'upcoming', 'Upcoming', v.kind === 'smart' && v.id === 'upcoming', null, open.filter(t => t.due && t.due > today).length) +
@@ -668,7 +685,7 @@
         ${list.length ? table(list.slice(0, more || 50), color) : `<p class="dash-empty">${empty}</p>`}
       </section>`;
     const projRows = projects.map(p => {
-      const pt = tasks.filter(t => t.projectId === p.id), done = pt.filter(isDone).length;
+      const ids = subtreeIds(p.id), pt = tasks.filter(t => ids.has(t.projectId)), done = pt.filter(isDone).length;
       return `<button class="dash-proj" data-action="goto" data-kind="project" data-id="${p.id}">
         <span class="proj-dot" style="background:${esc(p.color)}"></span>
         <span class="dash-proj-name">${esc(indentName(p))}</span>
@@ -746,7 +763,7 @@
   function renderRow(t, g) {
     const st = statusOf(t.status), pr = priorityOf(t.priority);
     const proj = projectOf(t.projectId);
-    const showProj = prefs.view.kind === 'project' ? false : g.projectId !== (t.projectId || null) && proj;
+    const showProj = g.projectId !== (t.projectId || null) && proj;
     const dueCls = isOverdue(t) ? 'overdue' : t.due === todayStr() && !isDone(t) ? 'today' : '';
     const hasRem = t.reminderAt && t.reminderMode !== 'none';
     const subs = subsOf(t);
@@ -824,7 +841,7 @@
   function calendarTasks(opts = {}) {
     const v = prefs.view;
     let list = tasks.filter(t => t.due && !(hidingDone() && !opts.withDone && isDone(t)));
-    if (v.kind === 'project') list = list.filter(t => t.projectId === v.id);
+    if (v.kind === 'project') { const ids = subtreeIds(v.id); list = list.filter(t => ids.has(t.projectId)); }
     if (search) {
       const q = search.toLowerCase();
       list = list.filter(t => t.title.toLowerCase().includes(q) || (t.notes || '').toLowerCase().includes(q) ||
