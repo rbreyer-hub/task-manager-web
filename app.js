@@ -57,7 +57,7 @@
   let prefs = loadPrefs();   // { view, mode, collapsed: {}, subsCollapsed: {} }
 
   function loadPrefs() {
-    const def = { view: { kind: 'smart', id: 'dashboard' }, mode: 'table', collapsed: {}, subsCollapsed: {} };
+    const def = { view: { kind: 'smart', id: 'dashboard' }, mode: 'table', collapsed: {}, subsCollapsed: {}, projCollapsed: {} };
     try { const p = Object.assign(def, JSON.parse(localStorage.getItem(PREFS_KEY)) || {}); p.view = def.view; return p; }   // the app always opens on the dashboard
     catch (_) { return def; }
   }
@@ -77,6 +77,39 @@
   const statusOf = id => STATUSES.find(s => s.id === id) || STATUSES[0];
   const priorityOf = id => PRIORITIES.find(p => p.id === (id || '')) || PRIORITIES[0];
   const projectOf = id => projects.find(p => p.id === id) || null;
+
+  /* ── Project tree: `parentId` + `order` on each project doc. `projects` is kept in depth-first
+     order, so anything iterating it shows parents followed by their children. ── */
+  let projMeta = {};   // id → { depth, kids }
+  const projCmp = (a, b) => (a.order ?? a.createdAt ?? 0) - (b.order ?? b.createdAt ?? 0) || (a.createdAt || 0) - (b.createdAt || 0);
+  function orderTree(list) {
+    const ids = new Set(list.map(p => p.id)), kids = {};
+    list.forEach(p => { const k = p.parentId && p.parentId !== p.id && ids.has(p.parentId) ? p.parentId : ''; (kids[k] ||= []).push(p); });
+    const out = [], seen = new Set(); projMeta = {};
+    const walk = (key, depth) => (kids[key] || []).sort(projCmp).forEach(p => {
+      if (seen.has(p.id)) return;
+      seen.add(p.id); projMeta[p.id] = { depth, kids: (kids[p.id] || []).length };
+      out.push(p); walk(p.id, depth + 1);
+    });
+    walk('', 0);
+    list.forEach(p => { if (!seen.has(p.id)) { projMeta[p.id] = { depth: 0, kids: 0 }; out.push(p); } });   // cycle safety
+    return out;
+  }
+  const projDepth = p => projMeta[p.id]?.depth || 0;
+  const childrenOf = id => projects.filter(p => (projMeta[p.id] && p.parentId === id && p.id !== id));
+  const isUnder = (id, ancestorId) => { for (let p = projectOf(id), n = 0; p && n < 50; p = projectOf(p.parentId), n++) { if (p.id === ancestorId) return true; } return false; };
+  /* Projects in tree order, minus the children of collapsed parents */
+  function visibleProjects() {
+    const out = []; let hideBelow = null;
+    projects.forEach(p => {
+      const d = projDepth(p);
+      if (hideBelow !== null && d > hideBelow) return;
+      hideBelow = null; out.push(p);
+      if (prefs.projCollapsed[p.id] && projMeta[p.id]?.kids) hideBelow = d;
+    });
+    return out;
+  }
+  const indentName = p => '\u00a0\u00a0'.repeat(projDepth(p)) + (projDepth(p) ? '↳ ' : '') + p.name;
   const isDone = t => t.status === 'done';
   const ALERT_ICON = '<span class="alert-mark" aria-hidden="true">!</span>';
   const labelHtml = o => (o.alert ? ALERT_ICON : '') + o.label;
@@ -277,7 +310,7 @@
   function subscribe() {
     unsubscribe();
     unsubs.push(projCol().orderBy('createdAt').onSnapshot(snap => {
-      projects = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      projects = orderTree(snap.docs.map(d => ({ id: d.id, ...d.data() })));
       loaded.projects = true;
       onData();
     }, e => { console.error(e); toast('Sync error: ' + e.code); }));
@@ -444,12 +477,16 @@
         <span class="nav-count ${s.id === 'overdue' && counts.overdue ? 'alert' : ''}">${counts[s.id] || ''}</span>
       </button>`).join('');
     renderBottomNav();
-    $('#projectNav').innerHTML = projects.length ? projects.map(p => `
-      <button class="nav-item ${v.kind === 'project' && v.id === p.id ? 'active' : ''}" data-project="${p.id}">
+    $('#projectNav').innerHTML = projects.length ? visibleProjects().map(p => {
+      const kids = projMeta[p.id]?.kids, shut = prefs.projCollapsed[p.id];
+      return `
+      <button class="nav-item proj-item ${v.kind === 'project' && v.id === p.id ? 'active' : ''}" data-project="${p.id}" draggable="true" style="padding-left:${10 + projDepth(p) * 16}px">
+        <span class="proj-caret ${kids ? '' : 'none'} ${shut ? 'shut' : ''}" data-caret="${p.id}" role="button" aria-label="${shut ? 'Expand' : 'Collapse'}">${kids ? '▾' : ''}</span>
         <span class="proj-dot" style="background:${esc(p.color)}"></span>
         <span class="nav-name">${esc(p.name)}</span>
+        <span class="proj-add" data-addsub="${p.id}" role="button" title="Add sub-project" aria-label="Add sub-project">+</span>
         <span class="nav-count">${open.filter(t => t.projectId === p.id).length || ''}</span>
-      </button>`).join('')
+      </button>`; }).join('')
       : `<div class="side-empty">No projects yet</div>`;
   }
 
@@ -474,7 +511,7 @@
     const open = tasks.filter(t => !isDone(t));
     $('#sheetBody').innerHTML =
       `<div class="sheet-title">Projects</div>` +
-      (projects.length ? projects.map(p => row('data-project', p.id, p.name, v.kind === 'project' && v.id === p.id, p.color, open.filter(t => t.projectId === p.id).length)).join('') : `<div class="side-empty">No projects yet</div>`) +
+      (projects.length ? projects.filter(p => visibleProjects().includes(p)).map(p => row('data-project', p.id, indentName(p), v.kind === 'project' && v.id === p.id, p.color, open.filter(t => t.projectId === p.id).length)).join('') : `<div class="side-empty">No projects yet</div>`) +
       `<button class="sheet-row sheet-new" data-bn="new-project">+ New project</button>` +
       `<div class="sheet-title">Lists</div>` +
       row('data-smart', 'upcoming', 'Upcoming', v.kind === 'smart' && v.id === 'upcoming', null, open.filter(t => t.due && t.due > today).length) +
@@ -603,7 +640,7 @@
       const pt = tasks.filter(t => t.projectId === p.id), done = pt.filter(isDone).length;
       return `<button class="dash-proj" data-action="goto" data-kind="project" data-id="${p.id}">
         <span class="proj-dot" style="background:${esc(p.color)}"></span>
-        <span class="dash-proj-name">${esc(p.name)}</span>
+        <span class="dash-proj-name">${esc(indentName(p))}</span>
         <span class="dash-proj-bar"><span style="width:${pt.length ? done / pt.length * 100 : 0}%;background:${esc(p.color)}"></span></span>
         <span class="dash-proj-n">${done}/${pt.length}</span>
       </button>`;
@@ -914,7 +951,66 @@
     searchTimer = setTimeout(() => { search = e.target.value.trim(); renderHeader(); renderBody(); }, 120);
   });
 
+  /* ── Drag & drop projects in the sidebar: drop on the top/bottom edge of a row to reorder,
+     or on its middle to nest underneath it as a sub-project ── */
+  let dragProj = null;
+  const nav = $('#projectNav');
+  function dropZone(e, row) {
+    const r = row.getBoundingClientRect(), y = (e.clientY - r.top) / r.height;
+    return y < 0.28 ? 'before' : y > 0.72 ? 'after' : 'into';
+  }
+  function clearDropMarks() { $$('.drop-before,.drop-after,.drop-into,.dragging', nav).forEach(el => el.classList.remove('drop-before', 'drop-after', 'drop-into', 'dragging')); }
+  nav.addEventListener('dragstart', e => {
+    const row = e.target.closest('[data-project]'); if (!row) return;
+    dragProj = row.dataset.project;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', dragProj);
+    setTimeout(() => row.classList.add('dragging'), 0);
+  });
+  nav.addEventListener('dragover', e => {
+    if (!dragProj) return;
+    const row = e.target.closest('[data-project]');
+    $$('.drop-before,.drop-after,.drop-into', nav).forEach(el => el.classList.remove('drop-before', 'drop-after', 'drop-into'));
+    if (!row || row.dataset.project === dragProj || isUnder(row.dataset.project, dragProj)) return;   // not onto itself or its own descendants
+    e.preventDefault();
+    row.classList.add('drop-' + dropZone(e, row));
+  });
+  nav.addEventListener('dragleave', e => { if (!nav.contains(e.relatedTarget)) $$('.drop-before,.drop-after,.drop-into', nav).forEach(el => el.classList.remove('drop-before', 'drop-after', 'drop-into')); });
+  nav.addEventListener('dragend', () => { dragProj = null; clearDropMarks(); });
+  nav.addEventListener('drop', e => {
+    const row = e.target.closest('[data-project]');
+    if (!dragProj || !row) return;
+    e.preventDefault();
+    const zone = dropZone(e, row), target = projectOf(row.dataset.project), moved = projectOf(dragProj);
+    dragProj = null; clearDropMarks();
+    if (!target || !moved || target === moved || isUnder(target.id, moved.id)) return;
+    moveProject(moved, target, zone);
+  });
+  function moveProject(moved, target, zone) {
+    const newParent = zone === 'into' ? target.id : (target.parentId || null);
+    const sibs = childrenOf(newParent || null).filter(p => p !== moved);
+    let idx = zone === 'into' ? sibs.length : sibs.indexOf(target) + (zone === 'after' ? 1 : 0);
+    sibs.splice(idx, 0, moved);
+    const batch = db.batch(); let n = 0;
+    sibs.forEach((p, i) => {
+      if (p.order === i && (p.parentId || null) === (newParent || null)) return;
+      p.order = i; p.parentId = newParent || null;
+      batch.update(projCol().doc(p.id), { order: i, parentId: newParent || null, updatedAt: Date.now() }); n++;
+    });
+    if (zone === 'into') { delete prefs.projCollapsed[target.id]; savePrefs(); }
+    projects = orderTree(projects);
+    render();
+    if (n) batch.commit().catch(fail);
+  }
+
   $('#sidebar').addEventListener('click', e => {
+    const caret = e.target.closest('[data-caret]'), addSub = e.target.closest('[data-addsub]');
+    if (caret) {
+      const id = caret.dataset.caret;
+      if (prefs.projCollapsed[id]) delete prefs.projCollapsed[id]; else prefs.projCollapsed[id] = true;
+      savePrefs(); renderSidebar(); return;
+    }
+    if (addSub) return openProjectModal(null, addSub.dataset.addsub);
     const s = e.target.closest('[data-smart]'), p = e.target.closest('[data-project]');
     if (s) setView({ kind: 'smart', id: s.dataset.smart });
     else if (p) setView({ kind: 'project', id: p.dataset.project });
@@ -1425,7 +1521,7 @@
     $('#fTitle').value = draft.title;
     $('#fNotes').value = draft.notes || '';
     $('#fProject').innerHTML = `<option value="">No project</option>` +
-      projects.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+      projects.map(p => `<option value="${p.id}">${esc(indentName(p))}</option>`).join('');
     $('#fProject').value = draft.projectId || '';
     renderCategorySelect(draft.categoryId);
     $('#fDue').value = draft.due || '';
@@ -1726,11 +1822,15 @@
     e.target.value = '';
     renderModalCats();
   });
-  function openProjectModal(id) {
+  function openProjectModal(id, parentId) {
     const p = id ? projectOf(id) : null;
     editingProjectId = id;
     $('#projectModalTitle').textContent = p ? 'Edit project' : 'New project';
     $('#pName').value = p ? p.name : '';
+    const pp = p ? p.parentId : parentId;
+    $('#pParent').innerHTML = `<option value="">None (top level)</option>` +
+      projects.filter(x => !p || (x.id !== p.id && !isUnder(x.id, p.id))).map(x => `<option value="${x.id}">${esc(indentName(x))}</option>`).join('');
+    $('#pParent').value = pp && projectOf(pp) ? pp : '';
     pickedColor = p ? p.color : PROJECT_COLORS[projects.length % PROJECT_COLORS.length];
     modalCats = catsOf(p).map(c => ({ ...c }));
     $('#pCatAdd').value = '';
@@ -1758,15 +1858,18 @@
     const categories = modalCats.map(c => ({ ...c, name: c.name.trim() })).filter(c => c.name);
     if (editingProjectId) {
       const p = projectOf(editingProjectId);
-      Object.assign(p, { name, color: pickedColor });
-      saveCategories(p, categories, { name, color: pickedColor });
+      const parentId = $('#pParent').value || null, moved = (p.parentId || null) !== parentId;
+      const extra = moved ? { parentId, order: Date.now() } : {};
+      Object.assign(p, { name, color: pickedColor }, extra);
+      if (moved) projects = orderTree(projects);
+      saveCategories(p, categories, { name, color: pickedColor, ...extra });
       render();
     } else {
       const ref = projCol().doc();
-      const data = { name, color: pickedColor, categories, createdAt: Date.now(), updatedAt: Date.now() };
+      const data = { name, color: pickedColor, categories, parentId: $('#pParent').value || null, order: Date.now(), createdAt: Date.now(), updatedAt: Date.now() };
       ref.set(data).catch(fail);
       // Show it right away; the snapshot listener replaces this with the stored copy
-      if (!projectOf(ref.id)) projects.push({ id: ref.id, ...data });
+      if (!projectOf(ref.id)) projects = orderTree([...projects, { id: ref.id, ...data }]);
       $('#projectModal').close();
       setView({ kind: 'project', id: ref.id });
       return;
@@ -1783,6 +1886,7 @@
     setView({ kind: 'smart', id: 'dashboard' });
     // Firestore batches cap at 500 writes
     const refs = [projCol().doc(p.id), ...owned.map(t => taskCol().doc(t.id))];
+    childrenOf(p.id).forEach(c => { c.parentId = p.parentId || null; projCol().doc(c.id).update({ parentId: p.parentId || null }).catch(fail); });   // sub-projects move up a level
     try {
       for (let i = 0; i < refs.length; i += 450) {
         const batch = db.batch();

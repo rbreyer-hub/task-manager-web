@@ -830,3 +830,17 @@ textarea { height: auto; padding: 10px; resize: vertical; line-height: 1.5; }
 .comment-add { display: flex; gap: 8px; align-items: flex-end; }
 .comment-add textarea { flex: 1; font: inherit; }
 .t-comments b { font-size: 11px; margin-left: 2px; }
+
+/* ── Nested / draggable projects ── */
+.proj-item { position: relative; gap: 6px; }
+.proj-caret { width: 14px; flex-shrink: 0; text-align: center; font-size: 11px; color: var(--muted); cursor: pointer; transition: transform .12s; }
+.proj-caret.none { visibility: hidden; cursor: default; }
+.proj-caret.shut { transform: rotate(-90deg); }
+.proj-add { display: none; width: 18px; height: 18px; line-height: 17px; text-align: center; border-radius: 4px; color: var(--muted); cursor: pointer; flex-shrink: 0; }
+.proj-add:hover { background: var(--hover); color: var(--text); }
+@media (hover: hover) { .proj-item:hover .proj-add { display: block; } .proj-item:hover .nav-count { display: none; } }
+.proj-item.dragging { opacity: .4; }
+.proj-item.drop-before { box-shadow: 0 -2px 0 0 var(--primary); }
+.proj-item.drop-after { box-shadow: 0 2px 0 0 var(--primary); }
+.proj-item.drop-into { outline: 2px solid var(--primary); outline-offset: -2px; background: var(--selected); }
+#pParent { width: 100%; }
