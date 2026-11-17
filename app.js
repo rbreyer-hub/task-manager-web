@@ -1959,4 +1959,31 @@
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && user && !$('#app').hidden) { render(); checkReminders(); }
   });
+
+  /* ── Auto-update ──
+     A home-screen shortcut on iOS keeps serving cached files for ages. Whenever the app comes back
+     to the foreground (and every few minutes while open), peek at index.html uncached; if the
+     script/style version tags changed, reload to pick up the new deploy. Waits while a task is
+     being edited so nothing typed is lost. */
+  const tagsOf = html => ['app.js', 'styles.css'].map(f => (html.match(new RegExp(f.replace('.', '\\.') + '\\?v=([\\w.-]+)')) || [])[1] || '').join('|');
+  const runningTags = tagsOf(document.documentElement.outerHTML);
+  let updateReady = false;
+  async function checkForUpdate() {
+    if (document.hidden || updateReady) return;
+    try {
+      const res = await fetch('index.html?_=' + Date.now(), { cache: 'no-store' });
+      if (!res.ok) return;
+      const tags = tagsOf(await res.text());
+      if (tags !== '|' && tags !== runningTags) { updateReady = true; applyUpdate(); }
+    } catch (_) { /* offline: try again next time */ }
+  }
+  function applyUpdate() {
+    if (draft) { setTimeout(applyUpdate, 3000); return; }   // task drawer open: wait until it closes
+    toast('Updating…', { duration: 1500 });
+    setTimeout(() => location.reload(), 400);
+  }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) checkForUpdate(); });
+  window.addEventListener('pageshow', e => { if (e.persisted) checkForUpdate(); });
+  setInterval(checkForUpdate, 5 * 60e3);
+  setTimeout(checkForUpdate, 4000);
 })();
