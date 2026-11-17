@@ -4,6 +4,7 @@
 
   const auth = firebase.auth();
   const db   = firebase.firestore();
+  const FV = firebase.firestore.FieldValue;
   db.enablePersistence({ synchronizeTabs: true }).catch(() => {});
 
   /* ── Constants ── */
@@ -227,27 +228,54 @@
     if (isDone(t)) setStatus(t, t.prevStatus && t.prevStatus !== 'done' ? t.prevStatus : 'todo');
     else { setStatus(t, 'done'); toast('Nice work — task completed', { action: 'Undo', onAction: () => setStatus({ ...t, status: 'done' }, t.status) }); }
   }
-  /* Subtasks live on the task doc as [{ id, title, done }] */
-  function saveSubtasks(t, subs) {
-    t.subtasks = subs;   // keep the local copy current until the snapshot lands
-    return updateTask(t.id, { subtasks: subs });
+  /* Subtasks live on the task doc as [{ id, title, done, due?, notes? }].
+     Like comments, they are never written back as a whole list from a possibly stale copy:
+     - edits/deletes run a transaction that re-reads the latest server copy and applies the same
+       id-based change to it, so another device's changes aren't overwritten;
+     - adds use arrayUnion (merged server-side, works offline);
+     - the screen updates right away and is rolled back with a toast if the write is rejected. */
+  const setSub = (id, patch) => list => list.map(st => st.id === id ? { ...st, ...patch } : st);
+  const dropSub = id => list => list.filter(st => st.id !== id);
+  function refreshSubUI(t) {
+    renderBody();
+    if (draft && editingTaskId === t.id) { draft.subtasks = subsOf(t).map(st => ({ ...st })); renderDrawerSubs(); }
+  }
+  function mutateSubtasks(t, fn) {
+    const before = subsOf(t);
+    t.subtasks = fn(before);
+    renderBody();
+    const ref = taskCol().doc(t.id);
+    return db.runTransaction(async tx => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) return;
+      tx.update(ref, { subtasks: fn(subsOf(snap.data())), updatedAt: Date.now() });
+    }).catch(err => { t.subtasks = before; refreshSubUI(t); fail(err); });
+  }
+  function appendSubtask(t, sub) {
+    t.subtasks = [...subsOf(t), sub];
+    renderBody();
+    return taskCol().doc(t.id).update({ subtasks: FV.arrayUnion(sub), updatedAt: Date.now() }).catch(err => {
+      t.subtasks = subsOf(t).filter(st => st.id !== sub.id); refreshSubUI(t); fail(err);
+    });
   }
   function toggleSubtask(t, subId) {
-    const subs = subsOf(t).map(st => st.id === subId ? { ...st, done: !st.done } : st);
-    saveSubtasks(t, subs);
-    if (!isDone(t) && subs.length > 1 && subs.every(st => st.done) && subs.find(st => st.id === subId).done) {
+    const cur = subsOf(t).find(st => st.id === subId); if (!cur) return;
+    const done = !cur.done;
+    mutateSubtasks(t, setSub(subId, { done }));
+    const subs = subsOf(t);
+    if (done && !isDone(t) && subs.length > 1 && subs.every(st => st.done)) {
       toast('All subtasks checked off', { action: 'Complete task', onAction: () => setStatus(t, 'done') });
     }
   }
   function addSubtask(t, title) {
-    return saveSubtasks(t, [...subsOf(t), { id: newSubId(), title, done: false }]);
+    return appendSubtask(t, { id: newSubId(), title, done: false });
   }
   function renameSubtask(t, subId, title) {
     if (!title) return removeSubtask(t, subId);
-    saveSubtasks(t, subsOf(t).map(st => st.id === subId ? { ...st, title } : st));
+    mutateSubtasks(t, setSub(subId, { title }));
   }
   function setSubtaskNotes(t, subId, notes) {
-    saveSubtasks(t, subsOf(t).map(st => st.id === subId ? { ...st, notes } : st));
+    mutateSubtasks(t, setSub(subId, { notes }));
   }
   function startSubNoteEdit(el, t, subId) {
     const cur = subsOf(t).find(st => st.id === subId)?.notes || '';
@@ -269,7 +297,7 @@
     inp.addEventListener('blur', () => finish(true));
   }
   function removeSubtask(t, subId) {
-    saveSubtasks(t, subsOf(t).filter(st => st.id !== subId));
+    mutateSubtasks(t, dropSub(subId));
   }
 
   /* Categories live on the project doc as [{ id, name, color }] in display order;
@@ -339,6 +367,9 @@
     render();
     if (editingTaskId) {   // new task just got created, or a comment arrived from another device
       const t = tasks.find(x => x.id === editingTaskId);
+      if (t && draft && !$('#subList').contains(document.activeElement) && JSON.stringify(draft.subtasks) !== JSON.stringify(subsOf(t))) {
+        draft.subtasks = subsOf(t).map(st => ({ ...st })); renderDrawerSubs();   // changed on another device
+      }
       if (t && ($('#commentAddRow').hidden || $('#commentList').children.length !== commentsOf(t).length)) renderComments();
     }
     checkReminders();
@@ -1284,7 +1315,7 @@
   function commitDue(inp) {
     const t = tasks.find(x => x.id === inp.closest('[data-id]').dataset.id);
     const subId = inp.closest('[data-sub]')?.dataset.sub;
-    if (t && subId) saveSubtasks(t, subsOf(t).map(st => st.id === subId ? { ...st, due: inp.value || null } : st));
+    if (t && subId) mutateSubtasks(t, setSub(subId, { due: inp.value || null }));
     else if (t) setDue(t, inp.value);
   }
   body.addEventListener('change', e => {
@@ -1566,7 +1597,6 @@
      so a comment that isn't really saved never lingers on screen. Adding uses arrayUnion, which merges
      server-side and works offline, so two devices adding comments can't overwrite each other. Edit/delete
      re-read the latest server copy inside a transaction for the same reason. */
-  const FV = firebase.firestore.FieldValue;
   function postComment() {
     const inp = $('#commentInput'), text = inp.value.trim();
     const t = editingTaskId && tasks.find(x => x.id === editingTaskId);
@@ -1659,30 +1689,29 @@
         <input class="sub-notes" value="${esc(st.notes || '')}" maxlength="500" placeholder="Add notes…" aria-label="Subtask notes">
       </li>`).join('');
   }
-  function commitDrawerSubs() {
+  /* fn is an id-based change to the list. It's applied to the draft copy here, and to the task's
+     latest server copy by mutateSubtasks. A task that isn't saved yet just keeps it in the draft. */
+  function commitDrawerSubs(fn) {
+    draft.subtasks = fn(draft.subtasks);
     renderDrawerSubs();
     const t = editingTaskId && tasks.find(x => x.id === editingTaskId);
-    if (t) saveSubtasks(t, draft.subtasks.map(st => ({ ...st })));
+    if (t) mutateSubtasks(t, fn);
     else scheduleSave();
   }
   $('#subList').addEventListener('change', e => {
     const li = e.target.closest('[data-sub]'); if (!li) return;
-    const st = draft.subtasks.find(x => x.id === li.dataset.sub);
-    if (e.target.type === 'checkbox') st.done = e.target.checked;
-    else if (e.target.classList.contains('sub-due')) st.due = e.target.value || null;
-    else if (e.target.classList.contains('sub-notes')) st.notes = e.target.value.trim();
+    const id = li.dataset.sub;
+    if (e.target.type === 'checkbox') commitDrawerSubs(setSub(id, { done: e.target.checked }));
+    else if (e.target.classList.contains('sub-due')) commitDrawerSubs(setSub(id, { due: e.target.value || null }));
+    else if (e.target.classList.contains('sub-notes')) commitDrawerSubs(setSub(id, { notes: e.target.value.trim() }));
     else {
       const v = e.target.value.trim();
-      if (!v) draft.subtasks = draft.subtasks.filter(x => x !== st);
-      else st.title = v;
+      commitDrawerSubs(v ? setSub(id, { title: v }) : dropSub(id));
     }
-    commitDrawerSubs();
   });
   $('#subList').addEventListener('click', e => {
     const del = e.target.closest('[data-sub-del]'); if (!del) return;
-    const id = del.closest('[data-sub]').dataset.sub;
-    draft.subtasks = draft.subtasks.filter(x => x.id !== id);
-    commitDrawerSubs();
+    commitDrawerSubs(dropSub(del.closest('[data-sub]').dataset.sub));
   });
   $('#subList').addEventListener('keydown', e => {
     if (e.key === 'Enter' && (e.target.classList.contains('sub-title') || e.target.classList.contains('sub-notes'))) { e.preventDefault(); e.target.blur(); }
@@ -1691,9 +1720,11 @@
     if (e.key !== 'Enter') return;
     e.preventDefault();
     const title = e.target.value.trim(); if (!title) return;
-    draft.subtasks.push({ id: newSubId(), title, done: false });
+    const sub = { id: newSubId(), title, done: false };
     e.target.value = '';
-    commitDrawerSubs();
+    const t = editingTaskId && tasks.find(x => x.id === editingTaskId);
+    if (t) { draft.subtasks.push(sub); renderDrawerSubs(); appendSubtask(t, sub); }
+    else commitDrawerSubs(list => [...list, sub]);
   });
 
   function syncReminderUI() {
@@ -1759,7 +1790,8 @@
       due, dueTime,
       reminderMode: reminderAt ? mode : 'none',
       reminderAt,
-      subtasks: draft.subtasks.map(st => ({ ...st }))
+      // Existing tasks save subtasks separately (see mutateSubtasks) so a stale draft can't overwrite them
+      ...(editingTaskId ? {} : { subtasks: draft.subtasks.map(st => ({ ...st })) })
     };
   }
   function flushSave() {
