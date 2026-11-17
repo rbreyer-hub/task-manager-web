@@ -991,16 +991,20 @@
     const sibs = childrenOf(newParent || null).filter(p => p !== moved);
     let idx = zone === 'into' ? sibs.length : sibs.indexOf(target) + (zone === 'after' ? 1 : 0);
     sibs.splice(idx, 0, moved);
-    const batch = db.batch(); let n = 0;
+    const batch = db.batch(); let n = 0; const undo = [];
     sibs.forEach((p, i) => {
       if (p.order === i && (p.parentId || null) === (newParent || null)) return;
+      undo.push([p, p.order, p.parentId]);
       p.order = i; p.parentId = newParent || null;
       batch.update(projCol().doc(p.id), { order: i, parentId: newParent || null, updatedAt: Date.now() }); n++;
     });
     if (zone === 'into') { delete prefs.projCollapsed[target.id]; savePrefs(); }
     projects = orderTree(projects);
     render();
-    if (n) batch.commit().catch(fail);
+    if (n) batch.commit().catch(e => {   // not saved: put everything back as it was
+      undo.forEach(([p, o, par]) => { p.order = o; p.parentId = par; });
+      projects = orderTree(projects); render(); fail(e);
+    });
   }
 
   $('#sidebar').addEventListener('click', e => {
@@ -1558,35 +1562,51 @@
         <div class="comment-text">${esc(c.text)}</div>
       </li>`).join('');
   }
-  function saveComments(t, list) {
-    t.comments = list;
-    return updateTask(t.id, { comments: list }).then(renderComments);
-  }
+  /* Writes go straight to Firestore and the screen is rolled back (with a toast) if one is rejected,
+     so a comment that isn't really saved never lingers on screen. Adding uses arrayUnion, which merges
+     server-side and works offline, so two devices adding comments can't overwrite each other. Edit/delete
+     re-read the latest server copy inside a transaction for the same reason. */
+  const FV = firebase.firestore.FieldValue;
   function postComment() {
     const inp = $('#commentInput'), text = inp.value.trim();
     const t = editingTaskId && tasks.find(x => x.id === editingTaskId);
     if (!t || !text) return;
+    const c = { id: 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), text, author: user?.displayName || '', at: Date.now() };
+    const before = commentsOf(t);
     inp.value = '';
-    saveComments(t, [...commentsOf(t), { id: 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), text, author: user?.displayName || '', at: Date.now() }]);
+    t.comments = [...before, c]; renderComments();
+    taskCol().doc(t.id).update({ comments: FV.arrayUnion(c), updatedAt: Date.now() }).catch(err => {
+      t.comments = commentsOf(t).filter(x => x.id !== c.id);
+      if (editingTaskId === t.id) { if (!inp.value) inp.value = text; renderComments(); }
+      fail(err);
+    });
+  }
+  function mutateComments(t, fn) {
+    const before = commentsOf(t);
+    t.comments = fn(before); renderComments();
+    const ref = taskCol().doc(t.id);
+    return db.runTransaction(async tx => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) return;
+      tx.update(ref, { comments: fn(commentsOf(snap.data())), updatedAt: Date.now() });
+    }).catch(err => { t.comments = before; renderComments(); fail(err); });
   }
   $('#commentPost').addEventListener('click', postComment);
   $('#commentInput').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); postComment(); } });
   $('#commentList').addEventListener('click', e => {
     const act = e.target.dataset.c; if (!act) return;
     const t = tasks.find(x => x.id === editingTaskId), li = e.target.closest('[data-cid]');
-    const c = t && commentsOf(t).find(x => x.id === li.dataset.cid); if (!c) return;
+    const cid = li.dataset.cid, c = t && commentsOf(t).find(x => x.id === cid); if (!c) return;
     if (act === 'del') {
-      if (confirm('Delete this comment?')) saveComments(t, commentsOf(t).filter(x => x !== c));
-    } else {
+      if (confirm('Delete this comment?')) mutateComments(t, list => list.filter(x => x.id !== cid));
+    } else if (act === 'edit') {
       const box = li.querySelector('.comment-text');
       box.innerHTML = `<textarea rows="3" maxlength="2000"></textarea><div class="comment-edit-actions"><button type="button" class="btn btn-primary" data-c="save">Save</button><button type="button" class="btn" data-c="cancel">Cancel</button></div>`;
       box.querySelector('textarea').value = c.text; box.querySelector('textarea').focus();
-    }
-    if (act === 'save') {
+    } else if (act === 'save') {
       const text = li.querySelector('textarea').value.trim();
-      if (text) saveComments(t, commentsOf(t).map(x => x === c ? { ...x, text, edited: true } : x));
-    }
-    if (act === 'cancel') renderComments();
+      if (text) mutateComments(t, list => list.map(x => x.id === cid ? { ...x, text, edited: true } : x));
+    } else if (act === 'cancel') renderComments();
   });
   function closeDrawer(skipSave) {
     if (skipSave !== true) flushSave();
@@ -1867,7 +1887,7 @@
     } else {
       const ref = projCol().doc();
       const data = { name, color: pickedColor, categories, parentId: $('#pParent').value || null, order: Date.now(), createdAt: Date.now(), updatedAt: Date.now() };
-      ref.set(data).catch(fail);
+      ref.set(data).catch(e => { projects = orderTree(projects.filter(p => p.id !== ref.id)); render(); fail(e); });
       // Show it right away; the snapshot listener replaces this with the stored copy
       if (!projectOf(ref.id)) projects = orderTree([...projects, { id: ref.id, ...data }]);
       $('#projectModal').close();
